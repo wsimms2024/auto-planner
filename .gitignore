@@ -1,0 +1,16 @@
+# Virtual environment
+.venv/
+venv/
+
+# Local database (your personal data, never commit it)
+data/
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
