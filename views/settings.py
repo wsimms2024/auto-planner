@@ -5,8 +5,6 @@ import streamlit as st
 
 from autoplan import db
 
-st.set_page_config(page_title="Settings · AutoPlan", page_icon="🗓️", layout="wide")
-db.init_db()
 
 st.title("Settings")
 st.info("Editing arrives in Phase 4. For now this shows what's saved in the database.")

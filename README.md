@@ -44,8 +44,8 @@ pytest
 
 | File | What it does | Edit it to... |
 |---|---|---|
-| `app.py` | Dashboard (home page) | Change what the home page shows |
-| `pages/` | Events, Tasks, Settings pages (auto-added to the sidebar) | Change those pages |
+| `app.py` | Starts the app and builds the sidebar | Add or reorder pages |
+| `views/` | One file per page: dashboard, events, tasks, settings | Change what a page shows |
 | `autoplan/scheduler.py` | Scheduling rules, no UI or database code | Tweak how sessions get suggested |
 | `autoplan/db.py` | All SQLite reads and writes | Add fields or queries |
 | `autoplan/models.py` | Event, Task, StudySession, Preferences | Add fields to a data type |

@@ -8,8 +8,6 @@ import streamlit as st
 from autoplan import config, db, ui
 from autoplan.models import Task
 
-st.set_page_config(page_title="Tasks · AutoPlan", page_icon="🗓️", layout="wide")
-db.init_db()
 
 st.title("Tasks")
 ui.show_flash()

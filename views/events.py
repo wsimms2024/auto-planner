@@ -7,8 +7,6 @@ import streamlit as st
 from autoplan import config, db, scheduler, ui
 from autoplan.models import Event
 
-st.set_page_config(page_title="Events · AutoPlan", page_icon="🗓️", layout="wide")
-db.init_db()
 
 st.title("Events")
 ui.show_flash()
