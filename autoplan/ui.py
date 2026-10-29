@@ -66,16 +66,36 @@ def show_flash() -> None:
 
 # ---------- Calendar data ----------
 
-def load_blocks(start: date, end: date) -> list[Block]:
-    """Events plus accepted study sessions between two dates, as calendar blocks."""
+def task_names() -> dict[int, str]:
+    return {t.id: t.name for t in db.list_tasks(include_deleted=True)}
+
+
+def get_suggestions(now: datetime | None = None) -> scheduler.ScheduleResult:
+    """Run the scheduler on everything saved. Fast enough to run on every page load."""
+    now = now or datetime.now()
+    prefs = db.get_preferences()
+    return scheduler.suggest_sessions(
+        db.list_tasks(), db.list_events(), db.list_active_sessions(now), prefs, now, prefs.planning_days
+    )
+
+
+def accepted_sessions() -> list:
+    return [s for s in db.list_active_sessions() if s.status == "accepted"]
+
+
+def load_blocks(start: date, end: date, suggestions: list | None = None) -> list[Block]:
+    """Events, accepted study sessions, and optional suggestions between two dates."""
     blocks = [
         Block(e.name, e.start, e.end, e.category)
         for e in scheduler.expand_events(db.list_events(), start, end)
     ]
-    task_names = {t.id: t.name for t in db.list_tasks(include_deleted=True)}
-    for s in db.list_study_sessions(status="accepted"):
+    names = task_names()
+    for s in accepted_sessions():
         if start <= s.start.date() <= end:
-            blocks.append(Block(f"Study: {task_names.get(s.task_id, 'task')}", s.start, s.end, "study"))
+            blocks.append(Block(f"Study: {names.get(s.task_id, 'task')}", s.start, s.end, "study"))
+    for s in suggestions or []:
+        if start <= s.start.date() <= end:
+            blocks.append(Block(f"Suggested: {names.get(s.task_id, 'task')}", s.start, s.end, "suggested"))
     return sorted(blocks, key=lambda b: b.start)
 
 
@@ -101,14 +121,17 @@ def week_picker(key: str) -> date:
     return monday
 
 
-def render_week(key: str) -> None:
+def render_week(key: str, suggestions: list | None = None) -> None:
     """Week picker plus the color-coded grid."""
     monday = week_picker(key)
-    blocks = load_blocks(monday - timedelta(days=1), monday + timedelta(days=6))
+    blocks = load_blocks(monday - timedelta(days=1), monday + timedelta(days=6), suggestions)
     labels, cats = build_week_grid(blocks, monday, db.get_preferences())
     st.dataframe(
         style_week_grid(labels, cats),
         width="stretch",
         height=min(36 * (len(labels) + 1) + 3, 900),
     )
-    st.caption("Blue class · Orange work · Green gym · Purple personal · Gray other · Teal study · Red overlap")
+    st.caption(
+        "Blue class · Orange work · Green gym · Purple personal · Gray other · "
+        "Teal study · Pale teal suggested · Red overlap"
+    )

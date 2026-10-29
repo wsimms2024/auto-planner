@@ -111,3 +111,20 @@ class Preferences:
     min_session_minutes: int = 30
     max_session_minutes: int = 90
     buffer_minutes: int = 15
+    # How many days ahead the scheduler plans
+    planning_days: int = 7
+
+    def validate(self) -> list[str]:
+        problems = []
+        for day, (start, end) in self.work_hours.items():
+            if end <= start:
+                problems.append(f"{config.WEEKDAYS[day].title()}: end time must be after start time.")
+        if self.min_session_minutes < 15:
+            problems.append("Minimum session must be at least 15 minutes.")
+        if self.max_session_minutes < self.min_session_minutes:
+            problems.append("Maximum session can't be shorter than the minimum.")
+        if self.buffer_minutes < 0:
+            problems.append("Buffer can't be negative.")
+        if not 1 <= self.planning_days <= 28:
+            problems.append("Plan ahead must be between 1 and 28 days.")
+        return problems

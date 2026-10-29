@@ -63,6 +63,11 @@ def task_form(key: str, existing: Task | None = None) -> None:
     st.rerun()
 
 
+planned = {}
+for session in ui.accepted_sessions():
+    planned[session.task_id] = planned.get(session.task_id, 0) + int((session.end - session.start).total_seconds() // 60)
+
+
 def status_table(tasks: list[Task], key: str) -> None:
     """Editable table where ticking 'Done' saves immediately."""
     df = pd.DataFrame(
@@ -72,6 +77,7 @@ def status_table(tasks: list[Task], key: str) -> None:
             "Due": [ui.fmt_dt(t.deadline) for t in tasks],
             "When": [ui.fmt_due(t.deadline, now) for t in tasks],
             "Estimate": [ui.fmt_minutes(t.estimated_minutes) for t in tasks],
+            "Planned": [ui.fmt_minutes(planned[t.id]) if planned.get(t.id) else "-" for t in tasks],
             "Priority": [t.priority for t in tasks],
         },
         index=[t.id for t in tasks],
@@ -81,7 +87,7 @@ def status_table(tasks: list[Task], key: str) -> None:
         key=key,
         hide_index=True,
         width="stretch",
-        disabled=["Task", "Due", "When", "Estimate", "Priority"],
+        disabled=["Task", "Due", "When", "Estimate", "Planned", "Priority"],
         column_config={"Done": st.column_config.CheckboxColumn(width="small")},
     )
     changed = edited.index[edited["Done"] != df["Done"]]

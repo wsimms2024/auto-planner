@@ -24,6 +24,7 @@ CATEGORY_COLORS = {
     "personal": "#E9D5FF",
     "other": "#E5E7EB",
     "study": "#99F6E4",
+    "suggested": "#F0FDFA",
     "conflict": "#FCA5A5",
 }
 

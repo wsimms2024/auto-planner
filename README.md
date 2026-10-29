@@ -60,7 +60,7 @@ pytest
   removing it, so nothing is lost by accident.
 - **Recurring events** are stored once ("weekly on Mon/Wed until Dec 12")
   and expanded into actual dates only when needed.
-- **Working hours** default to 9am to 8pm every day and can be set per
+- **Study hours** default to all day (00:00 to 23:59) for a new database and can be set per
   weekday.
 - **Weekly view** starts as a simple pandas grid. It can be swapped for the
   `streamlit-calendar` component later if it feels too plain.
@@ -76,7 +76,7 @@ Repo, folder structure, SQLite, Streamlit skeleton, README.
 Add, edit, soft-delete and restore events and tasks. Weekly recurrence,
 overlap check, color-coded weekly grid, dashboard.
 
-### Phase 3: Scheduling engine + editable settings
+### ~~Phase 3: Scheduling engine + editable settings~~
 - Find free time inside working hours, respecting the buffer around events
 - Rank open tasks by deadline urgency and priority
 - Split large tasks into sessions between the min and max length

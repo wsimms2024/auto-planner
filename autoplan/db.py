@@ -160,16 +160,34 @@ def get_preferences(db_path: Optional[Path] = None) -> Preferences:
 
     # Fall back to defaults for anything missing
     merged = {**config.DEFAULT_PREFERENCES, **raw}
+    # A day saved as an empty list is a day off (no study sessions)
     work_hours = {
-        config.WEEKDAYS.index(day): (time.fromisoformat(start), time.fromisoformat(end))
-        for day, (start, end) in merged["work_hours"].items()
+        config.WEEKDAYS.index(day): (time.fromisoformat(hours[0]), time.fromisoformat(hours[1]))
+        for day, hours in merged["work_hours"].items()
+        if hours
     }
     return Preferences(
         work_hours=work_hours,
         min_session_minutes=int(merged["min_session_minutes"]),
         max_session_minutes=int(merged["max_session_minutes"]),
         buffer_minutes=int(merged["buffer_minutes"]),
+        planning_days=int(merged["planning_days"]),
     )
+
+
+def save_preferences(prefs: Preferences, db_path: Optional[Path] = None) -> None:
+    """Save every preference at once. Raises ValidationError if invalid."""
+    _check(prefs)
+    work_hours = {
+        day: [prefs.work_hours[i][0].strftime("%H:%M"), prefs.work_hours[i][1].strftime("%H:%M")]
+        if i in prefs.work_hours else []
+        for i, day in enumerate(config.WEEKDAYS)
+    }
+    set_preference("work_hours", work_hours, db_path)
+    set_preference("min_session_minutes", prefs.min_session_minutes, db_path)
+    set_preference("max_session_minutes", prefs.max_session_minutes, db_path)
+    set_preference("buffer_minutes", prefs.buffer_minutes, db_path)
+    set_preference("planning_days", prefs.planning_days, db_path)
 
 
 # ---------- Event writes ----------
@@ -286,6 +304,52 @@ def list_deleted_tasks(db_path: Optional[Path] = None) -> list[Task]:
     with get_connection(db_path) as conn:
         rows = conn.execute("SELECT * FROM tasks WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC")
         return [_row_to_task(r) for r in rows]
+
+
+# ---------- Study session writes ----------
+
+def add_study_session(session: StudySession, db_path: Optional[Path] = None) -> int:
+    """Save a session (usually one you accepted, or rejected so it isn't suggested again)."""
+    if session.end <= session.start:
+        raise ValidationError("Session end must be after its start.")
+    if session.status not in config.SESSION_STATUSES:
+        raise ValidationError(f"Unknown session status '{session.status}'.")
+    with get_connection(db_path) as conn:
+        cur = conn.execute(
+            'INSERT INTO study_sessions (task_id, start, "end", status) VALUES (?, ?, ?, ?)',
+            (session.task_id, session.start.isoformat(), session.end.isoformat(), session.status),
+        )
+        return cur.lastrowid
+
+
+def set_session_status(session_id: int, status: str, db_path: Optional[Path] = None) -> None:
+    """Change a session's status, e.g. remove an accepted session by marking it rejected."""
+    if status not in config.SESSION_STATUSES:
+        raise ValidationError(f"Unknown session status '{status}'.")
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE study_sessions SET status = ? WHERE id = ?", (status, session_id))
+
+
+def list_active_sessions(now: Optional[datetime] = None, db_path: Optional[Path] = None) -> list[StudySession]:
+    """
+    Accepted and rejected sessions the scheduler should know about.
+    Sessions for deleted tasks are left out, and so are future sessions
+    for tasks you've already marked done (no point studying for those).
+    """
+    now = now or datetime.now()
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT s.*, t.status AS task_status FROM study_sessions s "
+            "JOIN tasks t ON t.id = s.task_id "
+            "WHERE t.deleted_at IS NULL AND s.status IN ('accepted', 'rejected') ORDER BY s.start"
+        ).fetchall()
+    sessions = []
+    for r in rows:
+        session = _row_to_session(r)
+        if r["task_status"] == "done" and session.start >= now:
+            continue
+        sessions.append(session)
+    return sessions
 
 
 # ---------- Preference writes ----------

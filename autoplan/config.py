@@ -32,8 +32,9 @@ SESSION_STATUSES = ["suggested", "accepted", "rejected"]
 # Defaults written to the preferences table the first time the app runs.
 # Working hours are per weekday so you can change any single day later.
 DEFAULT_PREFERENCES = {
-    "work_hours": {day: ["09:00", "20:00"] for day in WEEKDAYS},
+    "work_hours": {day: ["00:00", "23:59"] for day in WEEKDAYS},
     "min_session_minutes": 30,
     "max_session_minutes": 90,
     "buffer_minutes": 15,
+    "planning_days": 7,
 }
