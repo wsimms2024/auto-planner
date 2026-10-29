@@ -1,18 +1,26 @@
 """
 Plain data objects passed between the database, the scheduler, and the UI.
 
-These hold data only. Database code lives in db.py, scheduling rules
-live in scheduler.py.
+These hold data plus simple validation. Database code lives in db.py,
+scheduling rules live in scheduler.py.
 """
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Optional
+
+from autoplan import config
 
 
 @dataclass
 class Event:
-    """A fixed commitment: class, work shift, gym, etc."""
+    """
+    A fixed commitment: class, work shift, gym, etc.
+
+    For a one-time event, start/end are the actual date and times.
+    For a weekly event, start/end hold the first date it can happen plus the
+    times; it repeats on recurrence_days until recurrence_until.
+    """
 
     name: str
     start: datetime
@@ -30,6 +38,30 @@ class Event:
     def is_recurring(self) -> bool:
         return bool(self.recurrence_days)
 
+    @property
+    def duration(self) -> timedelta:
+        return self.end - self.start
+
+    def validate(self) -> list[str]:
+        """Return a list of problems. Empty list means the event is OK."""
+        problems = []
+        if not self.name.strip():
+            problems.append("Name is required.")
+        if self.end <= self.start:
+            problems.append("End time must be after start time.")
+        if self.category not in config.EVENT_CATEGORIES:
+            problems.append(f"Unknown category '{self.category}'.")
+        if self.recurrence_days is not None:
+            if not self.recurrence_days:
+                problems.append("Pick at least one day for a weekly event.")
+            if any(d not in range(7) for d in self.recurrence_days):
+                problems.append("Weekdays must be numbers 0 (Mon) to 6 (Sun).")
+            if self.recurrence_until is None:
+                problems.append("A weekly event needs an end date.")
+            elif self.recurrence_until < self.start.date():
+                problems.append("Repeat-until date can't be before the start date.")
+        return problems
+
 
 @dataclass
 class Task:
@@ -42,6 +74,21 @@ class Task:
     status: str = "open"  # open / done
     id: Optional[int] = None
     deleted_at: Optional[datetime] = None
+
+    def is_overdue(self, now: datetime) -> bool:
+        return self.status == "open" and self.deadline < now
+
+    def validate(self) -> list[str]:
+        problems = []
+        if not self.name.strip():
+            problems.append("Name is required.")
+        if self.estimated_minutes <= 0:
+            problems.append("Estimated time must be more than 0 minutes.")
+        if self.priority not in config.PRIORITIES:
+            problems.append(f"Unknown priority '{self.priority}'.")
+        if self.status not in config.TASK_STATUSES:
+            problems.append(f"Unknown status '{self.status}'.")
+        return problems
 
 
 @dataclass

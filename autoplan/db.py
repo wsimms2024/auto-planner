@@ -172,8 +172,123 @@ def get_preferences(db_path: Optional[Path] = None) -> Preferences:
     )
 
 
-# ---------- Writes ----------
-# Add/edit/soft-delete for events and tasks arrive in Phase 2.
+# ---------- Event writes ----------
+
+class ValidationError(ValueError):
+    """Raised when an Event or Task fails validation. str() lists the problems."""
+
+
+def _check(obj) -> None:
+    problems = obj.validate()
+    if problems:
+        raise ValidationError(" ".join(problems))
+
+
+def _event_values(event: Event) -> tuple:
+    return (
+        event.name.strip(),
+        event.start.isoformat(),
+        event.end.isoformat(),
+        event.category,
+        json.dumps(sorted(event.recurrence_days)) if event.recurrence_days else None,
+        event.recurrence_until.isoformat() if event.recurrence_days and event.recurrence_until else None,
+    )
+
+
+def add_event(event: Event, db_path: Optional[Path] = None) -> int:
+    """Save a new event and return its id. Raises ValidationError if invalid."""
+    _check(event)
+    with get_connection(db_path) as conn:
+        cur = conn.execute(
+            'INSERT INTO events (name, start, "end", category, recurrence_days, recurrence_until) '
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            _event_values(event),
+        )
+        return cur.lastrowid
+
+
+def update_event(event: Event, db_path: Optional[Path] = None) -> None:
+    """Overwrite an existing event (matched by event.id)."""
+    if event.id is None:
+        raise ValueError("update_event needs an event with an id.")
+    _check(event)
+    with get_connection(db_path) as conn:
+        conn.execute(
+            'UPDATE events SET name = ?, start = ?, "end" = ?, category = ?, '
+            "recurrence_days = ?, recurrence_until = ? WHERE id = ?",
+            (*_event_values(event), event.id),
+        )
+
+
+def delete_event(event_id: int, db_path: Optional[Path] = None) -> None:
+    """Soft delete: hide the event but keep the row so it can be restored."""
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE events SET deleted_at = ? WHERE id = ?", (datetime.now().isoformat(), event_id))
+
+
+def restore_event(event_id: int, db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE events SET deleted_at = NULL WHERE id = ?", (event_id,))
+
+
+def list_deleted_events(db_path: Optional[Path] = None) -> list[Event]:
+    with get_connection(db_path) as conn:
+        rows = conn.execute("SELECT * FROM events WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC")
+        return [_row_to_event(r) for r in rows]
+
+
+# ---------- Task writes ----------
+
+def _task_values(task: Task) -> tuple:
+    return (task.name.strip(), task.deadline.isoformat(), task.estimated_minutes, task.priority, task.status)
+
+
+def add_task(task: Task, db_path: Optional[Path] = None) -> int:
+    _check(task)
+    with get_connection(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO tasks (name, deadline, estimated_minutes, priority, status) VALUES (?, ?, ?, ?, ?)",
+            _task_values(task),
+        )
+        return cur.lastrowid
+
+
+def update_task(task: Task, db_path: Optional[Path] = None) -> None:
+    if task.id is None:
+        raise ValueError("update_task needs a task with an id.")
+    _check(task)
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "UPDATE tasks SET name = ?, deadline = ?, estimated_minutes = ?, priority = ?, status = ? WHERE id = ?",
+            (*_task_values(task), task.id),
+        )
+
+
+def set_task_status(task_id: int, status: str, db_path: Optional[Path] = None) -> None:
+    if status not in config.TASK_STATUSES:
+        raise ValidationError(f"Unknown status '{status}'.")
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, task_id))
+
+
+def delete_task(task_id: int, db_path: Optional[Path] = None) -> None:
+    """Soft delete: hide the task but keep the row so it can be restored."""
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE tasks SET deleted_at = ? WHERE id = ?", (datetime.now().isoformat(), task_id))
+
+
+def restore_task(task_id: int, db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE tasks SET deleted_at = NULL WHERE id = ?", (task_id,))
+
+
+def list_deleted_tasks(db_path: Optional[Path] = None) -> list[Task]:
+    with get_connection(db_path) as conn:
+        rows = conn.execute("SELECT * FROM tasks WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC")
+        return [_row_to_task(r) for r in rows]
+
+
+# ---------- Preference writes ----------
 
 def set_preference(key: str, value, db_path: Optional[Path] = None) -> None:
     """Save one preference. value can be any JSON-friendly Python object."""
