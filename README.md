@@ -69,8 +69,38 @@ pytest
 
 ## Roadmap
 
-1. ~~Project setup~~
-2. ~~Manual scheduling: add/edit/delete events and tasks, weekly view~~
-3. Scheduling engine: free time, priorities, suggested sessions
-4. Usability: editable settings, validation, more tests
-5. Integrations (after MVP): Google Calendar, Blackboard scraper
+### ~~Phase 1: Project setup~~
+Repo, folder structure, SQLite, Streamlit skeleton, README.
+
+### ~~Phase 2: Manual scheduling~~
+Add, edit, soft-delete and restore events and tasks. Weekly recurrence,
+overlap check, color-coded weekly grid, dashboard.
+
+### Phase 3: Scheduling engine + editable settings
+- Find free time inside working hours, respecting the buffer around events
+- Rank open tasks by deadline urgency and priority
+- Split large tasks into sessions between the min and max length
+- Show suggested sessions on the dashboard to accept or reject
+- Accepted sessions appear on the calendar and count as busy time
+- Warn when there isn't enough free time before a deadline
+- Settings page becomes editable: working hours per weekday, min/max
+  session length, buffer
+- Tests: overlaps, approaching deadlines, not enough time, multi-session
+  tasks, recurring events, completed tasks, scheduling across days
+
+### Phase 4: Usability
+- Interface polish, including a better phone layout
+- More validation and error handling
+- More scheduling scenario tests
+- Optional: Tailscale so the dashboard works on your phone away from home
+
+### Phase 5: Integrations (after the MVP is approved)
+1. Google Calendar sync, which gives phone alerts through your calendar app
+   (can move up to right after Phase 3)
+2. Blackboard assignment scraper feeding tasks in automatically
+3. Automatic rescheduling of unfinished sessions
+4. Notifications and reminders
+5. Gym schedule preferences
+6. Workload analytics
+7. Scheduling based on your past productivity
+8. Optional AI-generated scheduling suggestions
