@@ -44,11 +44,6 @@ def week_start_for(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
-def _floor(t: time, slot: int) -> time:
-    minutes = (t.hour * 60 + t.minute) // slot * slot
-    return time(minutes // 60, minutes % 60)
-
-
 def build_week_grid(
     blocks: list[Block],
     week_start: date,
@@ -58,24 +53,16 @@ def build_week_grid(
     """
     Returns (labels, categories): two tables with the same shape.
     labels holds the text for each cell, categories holds the color key.
-    The visible hours cover your working hours plus anything outside them.
+    Rows cover the whole day, midnight to midnight.
     """
     days = [week_start + timedelta(days=i) for i in range(7)]
     week_end = datetime.combine(days[-1], time.max)
     week_blocks = [b for b in blocks if b.end > datetime.combine(week_start, time.min) and b.start <= week_end]
 
-    # Visible hours: working hours, stretched to fit any block this week
-    first = min((s for s, _ in prefs.work_hours.values()), default=time(9))
-    last = max((e for _, e in prefs.work_hours.values()), default=time(20))
-    for b in week_blocks:
-        first = min(first, b.start.time())
-        last = max(last, b.end.time() if b.end.date() == b.start.date() else time(23, 59))
-    first = _floor(first, slot_minutes)
-
+    # The calendar always shows the full day. Study hours only limit suggestions.
     slot_starts = []
-    t = datetime.combine(date.min, first)
-    stop = datetime.combine(date.min, last)
-    while t < stop:
+    t = datetime(2000, 1, 1)
+    while t.day == 1:
         slot_starts.append(t.time())
         t += timedelta(minutes=slot_minutes)
 

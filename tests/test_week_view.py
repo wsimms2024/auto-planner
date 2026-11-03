@@ -23,11 +23,13 @@ def test_block_fills_its_slots():
     assert [cats.at[r, col] for r in ["10:00 AM", "10:30 AM", "11:00 AM", "11:30 AM"]] == ["class"] * 3 + [""]
 
 
-def test_grid_stretches_to_early_events():
+def test_grid_shows_the_full_day():
     b = Block("Lift", datetime(2026, 11, 3, 6, 30), datetime(2026, 11, 3, 7, 30), "gym")
     labels, _ = build_week_grid([b], MON, PREFS)
-    assert labels.index[0] == "6:30 AM"
-    assert labels.index[-1] == "7:30 PM"
+    assert labels.index[0] == "12:00 AM"
+    assert labels.index[-1] == "11:30 PM"
+    assert len(labels) == 48
+    assert labels.at["6:30 AM", "Tue 11/03"] == "Lift"
 
 
 def test_overlap_marked_as_conflict():
