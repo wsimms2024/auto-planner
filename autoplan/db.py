@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS inbox_items (
     status       TEXT    NOT NULL DEFAULT 'pending'
 );
 
+CREATE TABLE IF NOT EXISTS gmail_seen (
+    message_id TEXT PRIMARY KEY          -- emails already checked, so scans never redo them
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
     source   TEXT PRIMARY KEY,           -- google, gmail, blackboard
     last_run TEXT NOT NULL,
@@ -523,6 +527,23 @@ def set_inbox_status(item_id: int, status: str, db_path: Optional[Path] = None) 
         raise ValidationError(f"Unknown inbox status '{status}'.")
     with get_connection(db_path) as conn:
         conn.execute("UPDATE inbox_items SET status = ? WHERE id = ?", (status, item_id))
+
+
+def filter_unseen_emails(message_ids: list[str], db_path: Optional[Path] = None) -> list[str]:
+    """Return only the Gmail message ids that haven't been checked yet, in the same order."""
+    if not message_ids:
+        return []
+    with get_connection(db_path) as conn:
+        marks = ",".join("?" * len(message_ids))
+        seen = {r[0] for r in conn.execute(f"SELECT message_id FROM gmail_seen WHERE message_id IN ({marks})", message_ids)}
+        # Emails already on the review list count as checked too
+        seen |= {r[0] for r in conn.execute(f"SELECT external_id FROM inbox_items WHERE external_id IN ({marks})", message_ids)}
+    return [m for m in message_ids if m not in seen]
+
+
+def mark_email_seen(message_id: str, db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("INSERT OR IGNORE INTO gmail_seen (message_id) VALUES (?)", (message_id,))
 
 
 # ---------- Sync bookkeeping ----------

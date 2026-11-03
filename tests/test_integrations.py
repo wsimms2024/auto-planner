@@ -25,7 +25,7 @@ class Call:
     def __init__(self, result):
         self.result = result
 
-    def execute(self):
+    def execute(self, num_retries=0):
         return self.result() if callable(self.result) else self.result
 
 
@@ -199,8 +199,8 @@ def test_extract_due_prefers_date_after_deadline_word_and_skips_past():
     ("Random <a@b.com>", "Hello", "Just checking in, no rush.", None),
 ])
 def test_classify(sender, subject, body, expected):
-    due = gmail.extract_due(f"{subject}\n{body}", RECEIVED)
-    assert gmail.classify(sender, subject, body, due) == expected
+    due, strong = gmail.find_due(f"{subject}\n{body}", RECEIVED)
+    assert gmail.classify(sender, subject, body, due, strong) == expected
 
 
 # ---------- Gmail: scan with a fake service ----------
@@ -210,8 +210,10 @@ def b64(text):
 
 
 class FakeGmail:
-    def __init__(self, messages):
+    def __init__(self, messages, fail_after=None):
         self.messages_by_id = {m["id"]: m for m in messages}
+        self.fail_after = fail_after  # simulate Gmail's rate limit after N downloads
+        self.downloads = 0
 
     def users(self):
         outer = self
@@ -222,7 +224,12 @@ class FakeGmail:
                 return Call({"messages": [{"id": i} for i in outer.messages_by_id]})
 
             def get(self, userId, id, format):
-                return Call(outer.messages_by_id[id])
+                def fetch():
+                    if outer.fail_after is not None and outer.downloads >= outer.fail_after:
+                        raise RuntimeError("HttpError 403: Quota exceeded ... rateLimitExceeded")
+                    outer.downloads += 1
+                    return outer.messages_by_id[id]
+                return Call(fetch)
 
         class Users:
             def getProfile(self, userId):
@@ -242,7 +249,8 @@ def gmail_msg(id, sender, subject, body, date="Tue, 03 Nov 2026 09:30:00 -0500")
     }}
 
 
-def test_scan_adds_only_time_sensitive_and_skips_duplicates():
+def test_scan_adds_only_time_sensitive_and_never_redownloads(monkeypatch):
+    monkeypatch.setattr(config, "GMAIL_PAUSE_SECONDS", 0)
     service = FakeGmail([
         gmail_msg("m1", "psmith@gwu.edu", "HW 6", "HW 6 is due Thursday at 5pm."),
         gmail_msg("m2", "friend@gmail.com", "lunch?", "want to get lunch"),
@@ -255,11 +263,24 @@ def test_scan_adds_only_time_sensitive_and_skips_duplicates():
     hw = next(i for i in items if i.external_id == "m1")
     assert hw.kind == "professor" and hw.detected_due == datetime(2026, 11, 5, 17, 0)
     assert "2 new" in msg
-    assert "newer_than:14d" in service.last_query
+    assert "newer_than:14d" in service.last_query and "from:blackboard.com" in service.last_query
 
-    gmail.scan(service, now=datetime(2026, 11, 3, 13), since=datetime(2026, 11, 3, 12))
+    gmail.scan(service, now=datetime(2026, 11, 3, 13))
+    assert service.downloads == 4  # second scan downloaded nothing
     assert len(db.list_inbox()) == 2
-    assert "after:" in service.last_query
+
+
+def test_scan_pauses_on_rate_limit_and_resumes(monkeypatch):
+    monkeypatch.setattr(config, "GMAIL_PAUSE_SECONDS", 0)
+    msgs = [gmail_msg(f"m{i}", "psmith@gwu.edu", f"HW {i}", f"HW {i} is due Friday.") for i in range(5)]
+    service = FakeGmail(msgs, fail_after=2)
+    msg = gmail.scan(service, now=datetime(2026, 11, 3, 12))
+    assert "rate limit" in msg and "3 left" in msg
+    assert len(db.list_inbox()) == 2
+
+    service.fail_after = None
+    gmail.scan(service, now=datetime(2026, 11, 3, 12, 5))
+    assert len(db.list_inbox()) == 5 and service.downloads == 5
 
 
 # ---------- Blackboard feed ----------
@@ -362,3 +383,37 @@ def test_blackboard_announcement_date_format():
 def test_exam_announcement_date_format():
     body = "Prepare for your first upcoming exam which will take place on Thursday, October 1st in Duques 152."
     assert gmail.extract_due(body, datetime(2026, 9, 28, 13, 28)) == datetime(2026, 10, 1, 23, 59)
+
+
+
+def test_gw_office_blasts_need_a_real_deadline():
+    blast = "Nashman Center <nashman@gwu.edu>"
+    body = "November 3, 2026. Happy Election Day! Projects, hiring and more."
+    due, strong = gmail.find_due(body, RECEIVED)
+    assert gmail.classify(blast, "IT'S ELECTION DAY! Resources for You!", body, due, strong, bulk=True) is None
+
+    reg = "GW Registrar <registrar@gwu.edu>"
+    body = "Registration begins at 9 am on Monday, November 9."
+    due, strong = gmail.find_due(body, RECEIVED)
+    assert gmail.classify(reg, "Your Spring 2027 Class Registration Starts Next Week", body, due, strong, bulk=True) == "time-sensitive"
+
+    form = "Student Affairs <studentaffairs@gwu.edu>"
+    body = "Complete the survey by Friday."
+    due, strong = gmail.find_due(body, RECEIVED)
+    assert gmail.classify(form, "Quick survey", body, due, strong, bulk=True) == "time-sensitive"
+
+
+
+def test_office_senders_count_as_mass_mail():
+    body = "Applications are open until Dec 4."
+    due, strong = gmail.find_due(body, RECEIVED)
+    assert gmail.classify("Campus Living & Residential Education <living@gwu.edu>", "Work with Us!", body, due, strong) is None
+    assert gmail.classify("Fowler Career Center <sbcareer@gwu.edu>", "Your Career Blueprint", "See you Nov 9.", *gmail.find_due("See you Nov 9.", RECEIVED)) is None
+    # A professor writing directly still gets through
+    body = "The quiz is moved to Nov 10."
+    assert gmail.classify("Nikola Karam <nikola.karam@gwu.edu>", "Quiz update", body, *gmail.find_due(body, RECEIVED)) == "professor"
+
+
+def test_muted_senders_are_skipped():
+    db.set_preference("gmail_muted_senders", ["psmith@gwu.edu"])
+    assert gmail.classify("Prof Smith <psmith@gwu.edu>", "Exam room change", "The exam is now in Room 101.", None) is None

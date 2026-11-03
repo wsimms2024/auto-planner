@@ -54,7 +54,9 @@ SESSION_REMINDER_MINUTES = 10
 
 # Gmail: how far back the first scan looks, and a cap per scan
 GMAIL_DAYS_BACK = 14
-GMAIL_MAX_MESSAGES = 200
+GMAIL_MAX_MESSAGES = 100
+# Pause between emails so a scan stays under Gmail's per-minute limit
+GMAIL_PAUSE_SECONDS = 0.25
 
 # Blackboard: time estimate given to newly imported assignments (change per task)
 BLACKBOARD_DEFAULT_MINUTES = 60

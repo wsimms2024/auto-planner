@@ -53,9 +53,7 @@ def sync_gmail(now: datetime | None = None, interactive: bool = False) -> tuple[
     from autoplan.integrations import gmail
 
     now = now or datetime.now()
-    last_run, message = db.get_sync_state("gmail")
-    since = last_run if last_run and not message.startswith("Failed") else None
-    return _run("gmail", lambda: gmail.scan(google_auth.gmail_service(interactive), now, since))
+    return _run("gmail", lambda: gmail.scan(google_auth.gmail_service(interactive), now))
 
 
 def sync_blackboard(now: datetime | None = None) -> tuple[bool, str]:
@@ -90,3 +88,9 @@ def due_for_auto_sync(now: datetime | None = None) -> bool:
         if last_run is None or now - last_run > timedelta(minutes=config.AUTO_SYNC_MINUTES):
             return True
     return False
+
+
+def recheck_inbox(now: datetime | None = None) -> tuple[bool, str]:
+    from autoplan.integrations import gmail
+
+    return _run("gmail_recheck", lambda: gmail.recheck_pending(google_auth.gmail_service(), now or datetime.now()))

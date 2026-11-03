@@ -1,4 +1,4 @@
-"""Dashboard: today, deadlines, suggested study sessions, and the week at a glance."""
+"""Dashboard: today, what needs attention, suggested study sessions, and the week."""
 
 from dataclasses import replace
 from datetime import date, datetime, timedelta
@@ -18,139 +18,128 @@ ui.show_flash()
 
 # Sync connected accounts if it's been a while (see AUTO_SYNC_MINUTES in config.py)
 if sync.due_for_auto_sync(now):
-    with st.spinner("Syncing Google Calendar, Gmail and Blackboard..."):
-        for name, ok, message in sync.sync_all(now):
-            if not ok:
-                st.warning(f"{name} sync didn't work: {message}")
+    with st.spinner("Syncing..."):
+        failed = [name for name, ok, _ in sync.sync_all(now) if not ok]
+    if failed:
+        st.warning(f"{', '.join(failed)} didn't sync. Details on the Sync page.")
 
 tasks = db.list_tasks()
 task_by_id = {t.id: t for t in tasks}
 open_tasks = [t for t in tasks if t.status == "open"]
 overdue = [t for t in open_tasks if t.is_overdue(now)]
 due_soon = [t for t in open_tasks if not t.is_overdue(now) and t.deadline <= now + timedelta(days=3)]
-due_week = [t for t in open_tasks if not t.is_overdue(now) and t.deadline <= now + timedelta(days=7)]
 prefs = db.get_preferences()
 accepted = ui.accepted_sessions()
 result = ui.get_suggestions(now)
+to_review = len(db.list_inbox())
 
 today_blocks = ui.load_blocks(today - timedelta(days=1), today)
 today_blocks = [b for b in today_blocks if b.end.date() >= today and b.start.date() <= today]
-free_week = scheduler.find_free_slots(
-    db.list_events(), prefs, today, today + timedelta(days=6), accepted, now
-)
-free_today = [s for s in free_week if s[0].date() == today]
+free_week = scheduler.find_free_slots(db.list_events(), prefs, today, today + timedelta(days=6), accepted, now)
 free_hours = sum((e - s).total_seconds() for s, e in free_week) / 3600
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Today", f"{len(today_blocks)} item{'s' if len(today_blocks) != 1 else ''}")
+c1.metric("Today", len(today_blocks))
 c2.metric("Open tasks", len(open_tasks))
 c3.metric("Overdue", len(overdue))
-c4.metric("Free time, next 7 days", f"{free_hours:.0f}h")
+c4.metric("Free this week", f"{free_hours:.0f}h")
 
-left, right = st.columns(2)
+left, right = st.columns(2, gap="large")
 
 with left:
     st.subheader("Today")
     if not today_blocks:
-        st.write("Nothing scheduled today.")
+        st.write("Nothing scheduled.")
     for b in today_blocks:
-        marker = "✓ " if b.end < now else ("▶ " if b.start <= now < b.end else "")
-        st.markdown(f"{marker}**{ui.fmt_time(b.start)} – {ui.fmt_time(b.end)}**  {b.label}  :gray[{b.category}]")
-    if free_today:
-        st.caption("Still free today: " + ", ".join(f"{ui.fmt_time(s)}-{ui.fmt_time(e)}" for s, e in free_today))
+        when = f"{ui.fmt_time(b.start)}–{ui.fmt_time(b.end)}"
+        if b.end < now:
+            st.markdown(f":gray[{when} · {b.label}]")
+        elif b.start <= now:
+            st.markdown(f"**{when} · {b.label}** :blue[now]")
+        else:
+            st.markdown(f"{when} · {b.label}")
 
 with right:
     st.subheader("Needs attention")
-    to_review = len(db.list_inbox())
     if to_review:
         st.page_link("views/sync.py", label=f"{to_review} email{'s' if to_review != 1 else ''} to review", icon="📬")
-    if not overdue and not due_soon and not result.unscheduled:
-        st.write("Nothing overdue, nothing due in the next 3 days.")
     for t in overdue:
-        st.markdown(f":red[**{t.name}**, {ui.fmt_due(t.deadline, now)}] · {ui.fmt_minutes(t.estimated_minutes)}")
+        st.markdown(f":red[{t.name} · {ui.fmt_due(t.deadline, now)}]")
     for t in due_soon:
-        st.markdown(f"**{t.name}**, due {ui.fmt_due(t.deadline, now)} · {ui.fmt_minutes(t.estimated_minutes)} · {t.priority}")
+        st.markdown(f"{t.name} · :gray[{ui.fmt_due(t.deadline, now)}]")
     for task_id, minutes in result.unscheduled.items():
-        t = task_by_id[task_id]
-        window_end = now + timedelta(days=prefs.planning_days)
-        where = "before the deadline" if now < t.deadline <= window_end else f"in the next {prefs.planning_days} days"
-        st.warning(
-            f"Not enough free time for **{t.name}**: {ui.fmt_minutes(minutes)} won't fit {where}. "
-            "Free up time or lower the estimate."
-        )
+        st.markdown(f":orange[{task_by_id[task_id].name} · {ui.fmt_minutes(minutes)} won't fit]")
+    if not (to_review or overdue or due_soon or result.unscheduled):
+        st.write("All clear.")
 
-# ---------- Suggestions ----------
+st.divider()
+plan_tab, week_tab = st.tabs(["Suggested sessions", "This week"])
 
-st.subheader("Suggested study sessions")
-suggestions = result.sessions
+# ---------- Suggestions: one compact checklist ----------
 
-if not suggestions:
-    st.write("No suggestions right now. Add tasks with time estimates and they'll show up here.")
-else:
-    totals = {}
-    for s in suggestions:
-        totals[s.task_id] = totals.get(s.task_id, 0) + 1
-    part = {}
-
-    if st.button(f"Accept all {len(suggestions)}", type="primary"):
+with plan_tab:
+    suggestions = result.sessions
+    if not suggestions:
+        st.write("No suggestions right now.")
+    else:
+        totals = {}
         for s in suggestions:
-            db.add_study_session(replace(s, status="accepted"))
-        ui.flash(f"Added {len(suggestions)} study sessions to your schedule.")
-        st.rerun()
-
-    current_day = None
-    for i, s in enumerate(suggestions):
-        if s.start.date() != current_day:
-            current_day = s.start.date()
-            st.markdown(f"**{current_day:%A, %b} {current_day.day}**")
-        t = task_by_id[s.task_id]
-        part[s.task_id] = part.get(s.task_id, 0) + 1
-        label = f" · part {part[s.task_id]} of {totals[s.task_id]}" if totals[s.task_id] > 1 else ""
-
-        c1, c2, c3 = st.columns([6, 1, 1])
-        c1.markdown(
-            f"{ui.fmt_time(s.start)} – {ui.fmt_time(s.end)} · **{t.name}**{label}  "
-            f":gray[due {ui.fmt_dt(t.deadline)} · {t.priority}]"
+            totals[s.task_id] = totals.get(s.task_id, 0) + 1
+        seen = {}
+        rows = []
+        for s in suggestions:
+            seen[s.task_id] = seen.get(s.task_id, 0) + 1
+            part = f" ({seen[s.task_id]}/{totals[s.task_id]})" if totals[s.task_id] > 1 else ""
+            t = task_by_id[s.task_id]
+            rows.append({
+                "Accept": False,
+                "Skip": False,
+                "Day": f"{s.start:%a %b} {s.start.day}",
+                "Time": f"{ui.fmt_time(s.start)}–{ui.fmt_time(s.end)}",
+                "Task": t.name + part,
+                "Due": f"{t.deadline:%a} {ui.fmt_time(t.deadline)}",
+            })
+        edited = st.data_editor(
+            pd.DataFrame(rows),
+            hide_index=True,
+            width="stretch",
+            disabled=["Day", "Time", "Task", "Due"],
+            column_config={
+                "Accept": st.column_config.CheckboxColumn(width="small"),
+                "Skip": st.column_config.CheckboxColumn(width="small", help="Don't suggest this time again"),
+                "Task": st.column_config.TextColumn(width="large"),
+            },
+            key="suggestions_table",
         )
-        if c2.button("Accept", key=f"acc_{i}"):
-            db.add_study_session(replace(s, status="accepted"))
-            ui.flash(f"Added {t.name} on {ui.fmt_dt(s.start)}.")
+        c1, c2, _ = st.columns([1, 1, 4])
+        if c1.button("Save choices", type="primary"):
+            added = skipped = 0
+            for i, s in enumerate(suggestions):
+                if edited.at[i, "Accept"]:
+                    db.add_study_session(replace(s, status="accepted"))
+                    added += 1
+                elif edited.at[i, "Skip"]:
+                    db.add_study_session(replace(s, status="rejected"))
+                    skipped += 1
+            ui.flash(f"Added {added}, skipped {skipped}." if added or skipped else "Nothing checked.")
             st.rerun()
-        if c3.button("Reject", key=f"rej_{i}"):
-            db.add_study_session(replace(s, status="rejected"))
-            ui.flash(f"Skipped that slot for {t.name}. Here's the next best option.")
+        if c2.button(f"Accept all {len(suggestions)}"):
+            for s in suggestions:
+                db.add_study_session(replace(s, status="accepted"))
+            ui.flash(f"Added {len(suggestions)} study sessions.")
             st.rerun()
 
-# ---------- Planned sessions ----------
+    upcoming = [s for s in accepted if s.end >= now]
+    if upcoming:
+        with st.expander(f"Planned sessions ({len(upcoming)})"):
+            for s in upcoming:
+                t = task_by_id.get(s.task_id)
+                c1, c2 = st.columns([8, 1])
+                c1.markdown(f"{ui.fmt_dt(s.start)}–{ui.fmt_time(s.end)} · {t.name if t else 'task'}")
+                if c2.button("Remove", key=f"rm_{s.id}"):
+                    db.set_session_status(s.id, "rejected")
+                    ui.flash("Removed. It won't be suggested at that time again.")
+                    st.rerun()
 
-upcoming = [s for s in accepted if s.end >= now]
-if upcoming:
-    with st.expander(f"Planned study sessions ({len(upcoming)})"):
-        for s in upcoming:
-            t = task_by_id.get(s.task_id)
-            c1, c2 = st.columns([6, 1])
-            c1.write(f"{ui.fmt_dt(s.start)} – {ui.fmt_time(s.end)} · {t.name if t else 'task'}")
-            if c2.button("Remove", key=f"rm_{s.id}"):
-                db.set_session_status(s.id, "rejected")
-                ui.flash("Removed that session. It won't be suggested at that time again.")
-                st.rerun()
-
-# ---------- Deadlines and week ----------
-
-st.subheader("Due this week")
-if due_week:
-    st.dataframe(
-        pd.DataFrame(
-            [
-                {"Task": t.name, "Due": ui.fmt_dt(t.deadline), "Estimate": ui.fmt_minutes(t.estimated_minutes), "Priority": t.priority}
-                for t in due_week
-            ]
-        ),
-        hide_index=True,
-        width="stretch",
-    )
-else:
-    st.write("Nothing due in the next 7 days.")
-
-st.subheader("This week")
-ui.render_week("dash", suggestions)
+with week_tab:
+    ui.render_week("dash", result.sessions)

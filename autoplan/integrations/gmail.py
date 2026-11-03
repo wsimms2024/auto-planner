@@ -14,6 +14,7 @@ page. Gmail access is read-only.
 
 import base64
 import re
+import time as clock
 from datetime import datetime, time, timedelta
 from email.utils import parseaddr, parsedate_to_datetime
 from html import unescape
@@ -41,6 +42,20 @@ MASS_MAIL_SENDERS = re.compile(
 )
 # Blackboard emails that are just receipts, not anything you need to act on
 BLACKBOARD_NOISE = re.compile(r"^(submission received|.*grade (?:has been )?posted)", re.IGNORECASE)
+# Display names that belong to an office or program, not a person
+OFFICE_NAME = re.compile(
+    r"\b(center|centre|office|living|services?|career|life|infomail|alert|department|dept|school|program|team|"
+    r"university|communications?|education|engagement|registrar|admissions|library|athletics|news|events?|"
+    r"council|association|club|society|division|institute|college|housing|dining|it support|gw\w*)\b",
+    re.IGNORECASE,
+)
+
+# Subjects that are about a deadline even when the date isn't right next to "due"
+URGENT_SUBJECT = re.compile(
+    r"\b(due|deadline|registration|register|last day|reminder|action required|closes|closing|expires?|"
+    r"final notice|urgent|cancel\w*|reschedul\w*|postpone\w*|exam|quiz|midterm|interview)\b",
+    re.IGNORECASE,
+)
 MARKETING = re.compile(r"\b(unsubscribe|% off|sale ends|shop now|promo code|limited time)\b", re.IGNORECASE)
 
 MONTHS = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
@@ -55,23 +70,44 @@ DATE_PATTERNS = [
 
 # ---------- Pure logic (easy to test) ----------
 
-def classify(sender: str, subject: str, body: str, due: datetime | None) -> str | None:
-    """Return 'blackboard', 'professor', 'time-sensitive', or None to skip."""
+def classify(sender: str, subject: str, body: str, due: datetime | None, strong_date: bool = False, bulk: bool = False) -> str | None:
+    """
+    Return 'blackboard', 'professor', 'time-sensitive', or None to skip.
+
+    strong_date: the due date sits right after "due", "by", "deadline" etc.
+    bulk: the email is a mailing-list blast (has List-Unsubscribe / List-Id headers).
+    """
     name, address = parseaddr(sender)
     address = address.lower()
     text = f"{subject}\n{body}"
+    if address in muted_senders():
+        return None
+    bulk = bulk or bool(OFFICE_NAME.search(name))
 
     # Check the raw sender: Blackboard's display name contains an @ that confuses address parsing
     if "blackboard" in sender.lower() or re.search(r"blackboard", subject, re.I):
         return None if BLACKBOARD_NOISE.search(clean_subject(subject)) else "blackboard"
 
-    has_word = bool(DEADLINE_WORDS.search(text))
-    if address.endswith("@gwu.edu") and not MASS_MAIL_SENDERS.search(address):
-        return "professor" if (has_word or due) else None
+    if MARKETING.search(text) and not address.endswith("@gwu.edu"):
+        return None
 
-    if has_word and due and not MARKETING.search(text):
+    # A real person at GW writing to you (not a newsletter or office blast)
+    if address.endswith("@gwu.edu") and not bulk and not MASS_MAIL_SENDERS.search(address):
+        return "professor" if (DEADLINE_WORDS.search(text) or due) else None
+
+    # Everyone else, including GW office blasts: needs a clear deadline
+    if due and (strong_date or URGENT_SUBJECT.search(subject)):
         return "time-sensitive"
     return None
+
+
+def muted_senders() -> set[str]:
+    """Addresses you've muted on the Sync page."""
+    return set(db.get_preference_value("gmail_muted_senders") or [])
+
+
+def sender_address(sender: str) -> str:
+    return parseaddr(sender)[1].lower()
 
 
 def clean_subject(subject: str) -> str:
@@ -153,6 +189,19 @@ def extract_due(text: str, received: datetime) -> datetime | None:
     return min(candidates)[2] if candidates else None
 
 
+def find_due(text: str, received: datetime) -> tuple[datetime | None, bool]:
+    """extract_due plus whether the date came right after a word like 'due' or 'by'."""
+    due = extract_due(text, received)
+    if due is None:
+        return None, False
+    strong = any(
+        STRONG_DUE_WORDS.search(text[max(0, m.start() - 20):m.start()])
+        for pattern in DATE_PATTERNS for m in pattern.finditer(text)
+        if (d := _resolve(m.group(1), received)) and d.date() == due.date()
+    )
+    return due, strong
+
+
 # ---------- Gmail API ----------
 
 def _header(msg: dict, name: str) -> str:
@@ -182,51 +231,109 @@ def _body_text(payload: dict) -> str:
     return unescape(re.sub(r"<[^>]+>", " ", text))
 
 
-def scan(service, now: datetime, since: datetime | None = None) -> str:
+# Gmail's own search narrows things down first, so only likely matches get
+# downloaded. The rules above then decide what actually reaches the review list.
+CANDIDATE_QUERY = (
+    "from:blackboard.com OR from:gwu.edu OR due OR deadline OR exam OR midterm OR quiz "
+    "OR rescheduled OR postponed OR cancelled OR canceled OR interview OR \"action required\" OR urgent OR submit"
+)
+
+
+def _is_rate_limit(error: Exception) -> bool:
+    return "rateLimitExceeded" in str(error) or "Quota exceeded" in str(error) or " 429 " in str(error)
+
+
+def scan(service, now: datetime) -> str:
     """
-    Look through recent mail and add anything time-sensitive to the review list.
-    The first scan covers the last GMAIL_DAYS_BACK days; later scans only
-    look at mail since the previous scan (with an hour of overlap).
+    Check recent mail and add anything time-sensitive to the review list.
+
+    - Covers the last GMAIL_DAYS_BACK days every time, but each email is only
+      downloaded once (remembered in the gmail_seen table).
+    - At most GMAIL_MAX_MESSAGES new emails per run, paced to stay under
+      Gmail's per-minute limit. If the limit is hit anyway, it stops, keeps
+      what it found, and picks up where it left off next sync.
     """
-    profile = service.users().getProfile(userId="me").execute()
+    profile = service.users().getProfile(userId="me").execute(num_retries=3)
     email = profile.get("emailAddress", "")
-    if since:
-        window = f"after:{int((since - timedelta(hours=1)).replace(tzinfo=ZoneInfo(config.TIMEZONE)).timestamp())}"
-    else:
-        window = f"newer_than:{config.GMAIL_DAYS_BACK}d"
-    query = f"{window} -category:promotions -category:social -in:chats"
+    query = f"newer_than:{config.GMAIL_DAYS_BACK}d -category:promotions -category:social -in:chats ({CANDIDATE_QUERY})"
 
     ids, token = [], None
     while True:
-        resp = service.users().messages().list(userId="me", q=query, maxResults=100, pageToken=token).execute()
+        resp = service.users().messages().list(userId="me", q=query, maxResults=100, pageToken=token).execute(num_retries=3)
         ids += [m["id"] for m in resp.get("messages", [])]
         token = resp.get("nextPageToken")
-        if not token or len(ids) >= config.GMAIL_MAX_MESSAGES:
+        if not token or len(ids) >= 500:
             break
 
-    new = 0
-    for msg_id in ids[: config.GMAIL_MAX_MESSAGES]:
-        msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
-        sender, subject = _header(msg, "From"), _header(msg, "Subject") or "(no subject)"
+    todo = db.filter_unseen_emails(ids)
+    batch = todo[: config.GMAIL_MAX_MESSAGES]
+    checked = new = 0
+    paused = False
+    for msg_id in batch:
         try:
-            received = parsedate_to_datetime(_header(msg, "Date")).astimezone(ZoneInfo(config.TIMEZONE)).replace(tzinfo=None)
-        except (TypeError, ValueError):
-            received = now
-        body = _body_text(msg.get("payload", {}))
-        due = extract_due(f"{subject}\n{body}", received)
-        kind = classify(sender, subject, body, due)
-        if not kind:
-            continue
-        item = InboxItem(
-            external_id=msg_id,
-            subject=clean_subject(subject)[:300],
-            sender=sender[:200],
-            received_at=received,
-            snippet=unescape(msg.get("snippet", ""))[:400],
-            kind=kind,
-            detected_due=due,
-            link=f"https://mail.google.com/mail/?authuser={email}#all/{msg_id}",
-        )
-        if db.add_inbox_item(item):
+            msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute(num_retries=3)
+        except Exception as e:
+            if _is_rate_limit(e):
+                paused = True
+                break
+            raise
+        checked += 1
+        if _process(msg, email, now):
             new += 1
-    return f"checked {len(ids[: config.GMAIL_MAX_MESSAGES])} emails, {new} new to review"
+        db.mark_email_seen(msg_id)
+        clock.sleep(config.GMAIL_PAUSE_SECONDS)
+
+    left = len(todo) - checked
+    message = f"checked {checked} emails, {new} new to review"
+    if paused:
+        message += f"; hit Gmail's rate limit, {left} left for next sync"
+    elif left:
+        message += f"; {left} more next sync"
+    return message
+
+
+def _process(msg: dict, email: str, now: datetime) -> bool:
+    """Classify one message and add it to the review list. True if it was added."""
+    sender, subject = _header(msg, "From"), _header(msg, "Subject") or "(no subject)"
+    try:
+        received = parsedate_to_datetime(_header(msg, "Date")).astimezone(ZoneInfo(config.TIMEZONE)).replace(tzinfo=None)
+    except (TypeError, ValueError):
+        received = now
+    body = _body_text(msg.get("payload", {}))
+    due, strong = find_due(f"{subject}\n{body}", received)
+    bulk = bool(_header(msg, "List-Unsubscribe") or _header(msg, "List-Id") or _header(msg, "Precedence").lower() in ("bulk", "list"))
+    kind = classify(sender, subject, body, due, strong, bulk)
+    if not kind:
+        return False
+    item = InboxItem(
+        external_id=msg["id"],
+        subject=clean_subject(subject)[:300],
+        sender=sender[:200],
+        received_at=received,
+        snippet=unescape(msg.get("snippet", ""))[:400],
+        kind=kind,
+        detected_due=due,
+        link=f"https://mail.google.com/mail/?authuser={email}#all/{msg['id']}",
+    )
+    return db.add_inbox_item(item)
+
+
+def recheck_pending(service, now: datetime) -> str:
+    """Re-run the current rules on everything waiting for review; dismiss what no longer qualifies."""
+    removed = 0
+    for item in db.list_inbox():
+        try:
+            msg = service.users().messages().get(userId="me", id=item.external_id, format="full").execute(num_retries=3)
+        except Exception as e:
+            if _is_rate_limit(e):
+                break
+            continue
+        sender, subject = _header(msg, "From"), _header(msg, "Subject") or ""
+        body = _body_text(msg.get("payload", {}))
+        due, strong = find_due(f"{subject}\n{body}", item.received_at)
+        bulk = bool(_header(msg, "List-Unsubscribe") or _header(msg, "List-Id") or _header(msg, "Precedence").lower() in ("bulk", "list"))
+        if not classify(sender, subject, body, due, strong, bulk):
+            db.set_inbox_status(item.id, "dismissed")
+            removed += 1
+        clock.sleep(config.GMAIL_PAUSE_SECONDS)
+    return f"removed {removed} that don't match the current rules"
