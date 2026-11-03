@@ -105,9 +105,16 @@ with add_tab:
     event_form("add")
 
 with edit_tab:
-    events = db.list_events()
+    all_events = db.list_events()
+    events = [e for e in all_events if not e.is_imported]
+    imported = len(all_events) - len(events)
+    if imported:
+        st.caption(
+            f"{imported} event{'s come' if imported != 1 else ' comes'} from Google Calendar or Blackboard. Edit those at the source; "
+            "AutoPlan picks up changes on the next sync."
+        )
     if not events:
-        st.write("No events yet.")
+        st.write("No events added by hand yet.")
     else:
         chosen = st.selectbox("Event", events, format_func=ui.describe_event, key="edit_pick")
         if chosen.is_recurring:
@@ -119,7 +126,7 @@ with edit_tab:
             st.rerun()
 
 with deleted_tab:
-    deleted = db.list_deleted_events()
+    deleted = [e for e in db.list_deleted_events() if not e.is_imported]
     if not deleted:
         st.write("Nothing deleted.")
     for e in deleted:

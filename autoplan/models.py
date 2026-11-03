@@ -33,6 +33,14 @@ class Event:
     recurrence_until: Optional[date] = None
     id: Optional[int] = None
     deleted_at: Optional[datetime] = None
+    # Where it came from: manual, google, blackboard, gmail
+    source: str = "manual"
+    # Its id in that outside system, so re-syncing updates instead of duplicating
+    external_id: Optional[str] = None
+
+    @property
+    def is_imported(self) -> bool:
+        return self.source != "manual"
 
     @property
     def is_recurring(self) -> bool:
@@ -74,6 +82,8 @@ class Task:
     status: str = "open"  # open / done
     id: Optional[int] = None
     deleted_at: Optional[datetime] = None
+    source: str = "manual"
+    external_id: Optional[str] = None
 
     def is_overdue(self, now: datetime) -> bool:
         return self.status == "open" and self.deadline < now
@@ -99,6 +109,24 @@ class StudySession:
     start: datetime
     end: datetime
     status: str = "suggested"  # suggested / accepted / rejected
+    id: Optional[int] = None
+    # Id of the matching event on your Google "AutoPlan" calendar, once pushed
+    google_event_id: Optional[str] = None
+
+
+@dataclass
+class InboxItem:
+    """Something time-sensitive found in email, waiting for you to review."""
+
+    external_id: str  # Gmail message id
+    subject: str
+    sender: str
+    received_at: datetime
+    snippet: str
+    kind: str = "time-sensitive"  # blackboard / professor / time-sensitive
+    detected_due: Optional[datetime] = None
+    link: str = ""
+    status: str = "pending"  # pending / added / dismissed
     id: Optional[int] = None
 
 

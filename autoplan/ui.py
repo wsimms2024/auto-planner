@@ -54,14 +54,16 @@ def describe_event(event) -> str:
 
 # ---------- Flash messages (survive a rerun) ----------
 
-def flash(message: str) -> None:
-    st.session_state["_flash"] = message
+def flash(message: str, kind: str = "success") -> None:
+    """Show a message after the next rerun. kind: success, error, or warning."""
+    st.session_state["_flash"] = (message, kind)
 
 
 def show_flash() -> None:
-    message = st.session_state.pop("_flash", None)
-    if message:
-        st.success(message)
+    value = st.session_state.pop("_flash", None)
+    if value:
+        message, kind = value
+        {"error": st.error, "warning": st.warning}.get(kind, st.success)(message)
 
 
 # ---------- Calendar data ----------

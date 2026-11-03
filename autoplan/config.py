@@ -38,3 +38,23 @@ DEFAULT_PREFERENCES = {
     "buffer_minutes": 15,
     "planning_days": 7,
 }
+
+# ---------- Integrations ----------
+
+# All times in AutoPlan are local to this timezone
+TIMEZONE = "America/New_York"
+
+# Sync automatically when the app is opened if the last sync is older than this
+AUTO_SYNC_MINUTES = 30
+
+# Google Calendar: how far back/ahead to import, and the reminder on study sessions
+GOOGLE_SYNC_DAYS_BACK = 7
+GOOGLE_SYNC_WEEKS_AHEAD = 8
+SESSION_REMINDER_MINUTES = 10
+
+# Gmail: how far back the first scan looks, and a cap per scan
+GMAIL_DAYS_BACK = 14
+GMAIL_MAX_MESSAGES = 200
+
+# Blackboard: time estimate given to newly imported assignments (change per task)
+BLACKBOARD_DEFAULT_MINUTES = 60

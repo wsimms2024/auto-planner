@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from autoplan import db, scheduler, ui
+from autoplan.integrations import sync
 
 now = datetime.now()
 today = date.today()
@@ -14,6 +15,13 @@ today = date.today()
 st.title("AutoPlan")
 st.caption(f"{today:%A, %B} {today.day}")
 ui.show_flash()
+
+# Sync connected accounts if it's been a while (see AUTO_SYNC_MINUTES in config.py)
+if sync.due_for_auto_sync(now):
+    with st.spinner("Syncing Google Calendar, Gmail and Blackboard..."):
+        for name, ok, message in sync.sync_all(now):
+            if not ok:
+                st.warning(f"{name} sync didn't work: {message}")
 
 tasks = db.list_tasks()
 task_by_id = {t.id: t for t in tasks}
@@ -53,6 +61,9 @@ with left:
 
 with right:
     st.subheader("Needs attention")
+    to_review = len(db.list_inbox())
+    if to_review:
+        st.page_link("views/sync.py", label=f"{to_review} email{'s' if to_review != 1 else ''} to review", icon="📬")
     if not overdue and not due_soon and not result.unscheduled:
         st.write("Nothing overdue, nothing due in the next 3 days.")
     for t in overdue:

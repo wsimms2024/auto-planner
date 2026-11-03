@@ -79,6 +79,7 @@ def status_table(tasks: list[Task], key: str) -> None:
             "Estimate": [ui.fmt_minutes(t.estimated_minutes) for t in tasks],
             "Planned": [ui.fmt_minutes(planned[t.id]) if planned.get(t.id) else "-" for t in tasks],
             "Priority": [t.priority for t in tasks],
+            "From": [{"manual": "", "blackboard": "Blackboard", "gmail": "Email"}.get(t.source, t.source) for t in tasks],
         },
         index=[t.id for t in tasks],
     )
@@ -87,7 +88,7 @@ def status_table(tasks: list[Task], key: str) -> None:
         key=key,
         hide_index=True,
         width="stretch",
-        disabled=["Task", "Due", "When", "Estimate", "Planned", "Priority"],
+        disabled=["Task", "Due", "When", "Estimate", "Planned", "Priority", "From"],
         column_config={"Done": st.column_config.CheckboxColumn(width="small")},
     )
     changed = edited.index[edited["Done"] != df["Done"]]
@@ -128,6 +129,8 @@ with edit_tab:
         chosen = st.selectbox(
             "Task", tasks, format_func=lambda t: f"{t.name} · due {ui.fmt_dt(t.deadline)}", key="edit_pick"
         )
+        if chosen.source == "blackboard":
+            st.caption("From Blackboard. Your estimate, priority and status stay put; name and due date follow Blackboard on each sync.")
         task_form(f"edit_{chosen.id}", chosen)
         if st.button("Delete this task", key=f"del_{chosen.id}"):
             db.delete_task(chosen.id)

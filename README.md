@@ -34,6 +34,35 @@ When the app starts, the terminal prints a **Network URL** like
 Wi-Fi as your PC. If Windows asks about the firewall, allow Python on
 private networks. Your PC has to be on with the app running.
 
+## Connect Google Calendar, Gmail and Blackboard
+
+Everything lives on the **Sync** page. Syncing also runs on its own when you
+open the app if the last sync was more than 30 minutes ago.
+
+**Google (Calendar + Gmail), one time:**
+1. At console.cloud.google.com, create a project called AutoPlan.
+2. Enable **Google Calendar API** and **Gmail API**.
+3. Set up the OAuth consent screen as **External** and add your @gwu.edu
+   address as a test user.
+4. Create an OAuth client of type **Desktop app**, download it, and save it
+   as `credentials.json` in this folder (it's gitignored).
+5. On the Sync page click **Sign in with Google**, then pick which calendars
+   to import.
+
+- Imported calendar events are read-only here. Edit them in Google.
+- Accepted study sessions are copied to a separate **AutoPlan** calendar
+  with a 10-minute reminder, so your phone alerts you.
+- Gmail access is read-only. Blackboard notifications, professor emails and
+  anything with a clear deadline land on a review list; nothing becomes a
+  task until you approve it.
+
+**Blackboard:** in Blackboard's Calendar, copy the external calendar link
+and paste it on the Sync page. Assignments come in as tasks with a 60-minute
+estimate you can change; your edits survive re-syncs.
+
+Tweak sync timing, how far back email is scanned, and the default
+Blackboard estimate in `autoplan/config.py`.
+
 ## Run the tests
 
 ```powershell
@@ -51,6 +80,7 @@ pytest
 | `autoplan/models.py` | Event, Task, StudySession, Preferences | Add fields to a data type |
 | `autoplan/week_view.py` | Builds the weekly grid and its colors | Change colors, slot size, layout |
 | `autoplan/ui.py` | Shared page helpers (formatting, week picker) | Change how dates and times display |
+| `autoplan/integrations/` | Google Calendar, Gmail, Blackboard sync | Change what gets imported or how emails are filtered |
 | `autoplan/config.py` | DB path, categories, default preferences | Change defaults for a new database |
 | `tests/` | pytest tests | Add scenarios |
 
@@ -88,19 +118,18 @@ overlap check, color-coded weekly grid, dashboard.
 - Tests: overlaps, approaching deadlines, not enough time, multi-session
   tasks, recurring events, completed tasks, scheduling across days
 
-### Phase 4: Usability
-- Interface polish, including a better phone layout
-- More validation and error handling
-- More scheduling scenario tests
-- Optional: Tailscale so the dashboard works on your phone away from home
+### Phase 4: Integrations (in progress)
+- Google Calendar sync both ways (events in, study sessions out with phone reminders)
+- Gmail scan for Blackboard notifications, professor announcements and other
+  time-sensitive mail, with a review list
+- Blackboard assignments imported as tasks from the calendar feed
 
-### Phase 5: Integrations (after the MVP is approved)
-1. Google Calendar sync, which gives phone alerts through your calendar app
-   (can move up to right after Phase 3)
-2. Blackboard assignment scraper feeding tasks in automatically
-3. Automatic rescheduling of unfinished sessions
-4. Notifications and reminders
+### Phase 5: Usability and more integrations
+1. Interface polish, including a better phone layout
+2. More validation, error handling and scenario tests
+3. Optional: Tailscale so the dashboard works on your phone away from home
+4. Automatic rescheduling of unfinished sessions
 5. Gym schedule preferences
 6. Workload analytics
 7. Scheduling based on your past productivity
-8. Optional AI-generated scheduling suggestions
+8. Optional AI-generated scheduling suggestions (including smarter email triage)
