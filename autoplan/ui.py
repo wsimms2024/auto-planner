@@ -23,7 +23,8 @@ STYLE_PATH = Path(__file__).with_name("style.css")
 
 def apply_style() -> None:
     """Load style.css into the page. Called once from app.py."""
-    st.markdown(f"<style>{STYLE_PATH.read_text()}</style>", unsafe_allow_html=True)
+    css = STYLE_PATH.read_text(encoding="utf-8")  # utf-8: Windows defaults to cp1252
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
 # ---------- Formatting ----------

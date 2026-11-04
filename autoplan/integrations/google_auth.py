@@ -71,7 +71,7 @@ def get_credentials(interactive: bool = False):
 
 def _save(creds) -> None:
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH.write_text(creds.to_json())
+    TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
 
 
 def sign_out() -> None:
