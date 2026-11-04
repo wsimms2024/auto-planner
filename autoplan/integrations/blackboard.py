@@ -7,7 +7,7 @@ login or Duo, and updates on its own. Paste the link on the Sync page; it's
 saved only in your local database.
 
 Each item that looks like a due date becomes a task (source "blackboard")
-with a default time estimate you can change. Re-syncing updates the name
+with a priority and estimate guessed from its name (see task_rules.py). Re-syncing updates the name
 and due date but keeps your estimate, priority, and done/deleted status.
 Items that look like scheduled course events (class meetings, office hours)
 become events instead.
@@ -18,7 +18,7 @@ import urllib.request
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from autoplan import config, db
+from autoplan import config, db, task_rules
 from autoplan.models import Event, Task
 
 SOURCE = "blackboard"
@@ -59,11 +59,13 @@ def parse_feed(data: bytes) -> tuple[list[Task], list[Event]]:
         looks_due = is_all_day or end <= start or DUE_WORDS.search(f"{title} {description}") is not None
 
         if looks_due:
+            priority, minutes, plan = task_rules.guess(title)
             tasks.append(Task(
                 name=title,
                 deadline=end if end > start and not is_all_day else start,
-                estimated_minutes=config.BLACKBOARD_DEFAULT_MINUTES,
-                priority="Medium",
+                estimated_minutes=minutes,
+                priority=priority,
+                plan_sessions=plan,
                 source=SOURCE,
                 external_id=uid,
             ))

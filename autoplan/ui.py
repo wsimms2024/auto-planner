@@ -4,6 +4,8 @@ the weekly grid, and one-time success messages.
 """
 
 from datetime import date, datetime, timedelta
+from html import escape
+from pathlib import Path
 
 import streamlit as st
 
@@ -12,6 +14,16 @@ from autoplan.week_view import Block, build_week_grid, style_week_grid, week_sta
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+# ---------- Look ----------
+
+STYLE_PATH = Path(__file__).with_name("style.css")
+
+
+def apply_style() -> None:
+    """Load style.css into the page. Called once from app.py."""
+    st.markdown(f"<style>{STYLE_PATH.read_text()}</style>", unsafe_allow_html=True)
 
 
 # ---------- Formatting ----------
@@ -50,6 +62,21 @@ def describe_event(event) -> str:
         days = "/".join(DAY_SHORT[d] for d in event.recurrence_days)
         return f"{event.name} · {days} {times} until {event.recurrence_until:%b} {event.recurrence_until.day}"
     return f"{event.name} · {event.start:%a %b} {event.start.day} {times}"
+
+
+# ---------- Editable tables ----------
+
+def editor_key(name: str) -> str:
+    """
+    Key for an st.data_editor. Streamlit remembers ticked boxes by row number,
+    so after saving we switch to a fresh key (reset_editor). Otherwise the old
+    ticks would land on whatever rows moved into those positions.
+    """
+    return f"{name}_{st.session_state.get(f'_editor_{name}', 0)}"
+
+
+def reset_editor(name: str) -> None:
+    st.session_state[f"_editor_{name}"] = st.session_state.get(f"_editor_{name}", 0) + 1
 
 
 # ---------- Flash messages (survive a rerun) ----------

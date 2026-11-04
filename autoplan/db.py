@@ -84,6 +84,7 @@ MIGRATIONS = [
     ("tasks", "source", "TEXT NOT NULL DEFAULT 'manual'"),
     ("tasks", "external_id", "TEXT"),
     ("study_sessions", "google_event_id", "TEXT"),
+    ("tasks", "plan_sessions", "INTEGER NOT NULL DEFAULT 1"),
 ]
 
 INDEXES = """
@@ -113,11 +114,34 @@ def init_db(db_path: Optional[Path] = None) -> None:
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         conn.executescript(INDEXES)
+        _apply_task_rules_once(conn)
         for key, value in config.DEFAULT_PREFERENCES.items():
             conn.execute(
                 "INSERT OR IGNORE INTO preferences (key, value) VALUES (?, ?)",
                 (key, json.dumps(value)),
             )
+
+
+def _apply_task_rules_once(conn) -> None:
+    """
+    One-time cleanup for imported tasks created before task_rules existed:
+    any that still have the old defaults (Medium, 60 min) get the guessed
+    priority, estimate and plan setting. Tasks you already changed are left alone.
+    """
+    if conn.execute("SELECT 1 FROM preferences WHERE key = 'task_rules_v1'").fetchone():
+        return
+    from autoplan import task_rules
+
+    rows = conn.execute(
+        "SELECT id, name FROM tasks WHERE source IN ('blackboard', 'gmail') AND priority = 'Medium' AND estimated_minutes = 60"
+    ).fetchall()
+    for r in rows:
+        priority, minutes, plan = task_rules.guess(r["name"])
+        conn.execute(
+            "UPDATE tasks SET priority = ?, estimated_minutes = ?, plan_sessions = ? WHERE id = ?",
+            (priority, minutes, int(plan), r["id"]),
+        )
+    conn.execute("INSERT INTO preferences (key, value) VALUES ('task_rules_v1', 'true')")
 
 
 # ---------- Small conversion helpers ----------
@@ -156,6 +180,7 @@ def _row_to_task(row: sqlite3.Row) -> Task:
         deleted_at=_dt(row["deleted_at"]),
         source=row["source"],
         external_id=row["external_id"],
+        plan_sessions=bool(row["plan_sessions"]),
     )
 
 
@@ -220,6 +245,7 @@ def get_preferences(db_path: Optional[Path] = None) -> Preferences:
         max_session_minutes=int(merged["max_session_minutes"]),
         buffer_minutes=int(merged["buffer_minutes"]),
         planning_days=int(merged["planning_days"]),
+        suggest_low_priority=bool(merged["suggest_low_priority"]),
     )
 
 
@@ -236,6 +262,7 @@ def save_preferences(prefs: Preferences, db_path: Optional[Path] = None) -> None
     set_preference("max_session_minutes", prefs.max_session_minutes, db_path)
     set_preference("buffer_minutes", prefs.buffer_minutes, db_path)
     set_preference("planning_days", prefs.planning_days, db_path)
+    set_preference("suggest_low_priority", prefs.suggest_low_priority, db_path)
 
 
 # ---------- Event writes ----------
@@ -306,15 +333,15 @@ def list_deleted_events(db_path: Optional[Path] = None) -> list[Event]:
 # ---------- Task writes ----------
 
 def _task_values(task: Task) -> tuple:
-    return (task.name.strip(), task.deadline.isoformat(), task.estimated_minutes, task.priority, task.status)
+    return (task.name.strip(), task.deadline.isoformat(), task.estimated_minutes, task.priority, task.status, int(task.plan_sessions))
 
 
 def add_task(task: Task, db_path: Optional[Path] = None) -> int:
     _check(task)
     with get_connection(db_path) as conn:
         cur = conn.execute(
-            "INSERT INTO tasks (name, deadline, estimated_minutes, priority, status, source, external_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (name, deadline, estimated_minutes, priority, status, plan_sessions, source, external_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (*_task_values(task), task.source, task.external_id),
         )
         return cur.lastrowid
@@ -326,7 +353,7 @@ def update_task(task: Task, db_path: Optional[Path] = None) -> None:
     _check(task)
     with get_connection(db_path) as conn:
         conn.execute(
-            "UPDATE tasks SET name = ?, deadline = ?, estimated_minutes = ?, priority = ?, status = ? WHERE id = ?",
+            "UPDATE tasks SET name = ?, deadline = ?, estimated_minutes = ?, priority = ?, status = ?, plan_sessions = ? WHERE id = ?",
             (*_task_values(task), task.id),
         )
 
@@ -336,6 +363,12 @@ def set_task_status(task_id: int, status: str, db_path: Optional[Path] = None) -
         raise ValidationError(f"Unknown status '{status}'.")
     with get_connection(db_path) as conn:
         conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, task_id))
+
+
+def set_task_planning(task_id: int, plan: bool, db_path: Optional[Path] = None) -> None:
+    """Turn study-session suggestions on or off for one task."""
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE tasks SET plan_sessions = ? WHERE id = ?", (int(plan), task_id))
 
 
 def delete_task(task_id: int, db_path: Optional[Path] = None) -> None:
@@ -461,8 +494,8 @@ def upsert_external_task(task: Task, db_path: Optional[Path] = None) -> tuple[in
         row = _find_external(conn, "tasks", task.source, task.external_id)
         if row is None:
             cur = conn.execute(
-                "INSERT INTO tasks (name, deadline, estimated_minutes, priority, status, source, external_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO tasks (name, deadline, estimated_minutes, priority, status, plan_sessions, source, external_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (*_task_values(task), task.source, task.external_id),
             )
             return cur.lastrowid, True

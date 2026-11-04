@@ -57,11 +57,10 @@ open the app if the last sync was more than 30 minutes ago.
   task until you approve it.
 
 **Blackboard:** in Blackboard's Calendar, copy the external calendar link
-and paste it on the Sync page. Assignments come in as tasks with a 60-minute
-estimate you can change; your edits survive re-syncs.
+and paste it on the Sync page. Assignments come in as tasks with a priority and
+estimate guessed from the name (`autoplan/task_rules.py`); your edits survive re-syncs.
 
-Tweak sync timing, how far back email is scanned, and the default
-Blackboard estimate in `autoplan/config.py`.
+Tweak sync timing and how far back email is scanned in `autoplan/config.py`.
 
 ## Run the tests
 

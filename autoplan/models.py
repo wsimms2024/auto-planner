@@ -84,6 +84,8 @@ class Task:
     deleted_at: Optional[datetime] = None
     source: str = "manual"
     external_id: Optional[str] = None
+    # False = track the deadline but never suggest study sessions for it
+    plan_sessions: bool = True
 
     def is_overdue(self, now: datetime) -> bool:
         return self.status == "open" and self.deadline < now
@@ -141,6 +143,8 @@ class Preferences:
     buffer_minutes: int = 15
     # How many days ahead the scheduler plans
     planning_days: int = 7
+    # Suggest study sessions for Low priority tasks too
+    suggest_low_priority: bool = False
 
     def validate(self) -> list[str]:
         problems = []

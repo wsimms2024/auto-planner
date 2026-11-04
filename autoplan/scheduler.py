@@ -18,6 +18,9 @@ How suggestions are made (suggest_sessions):
    sessions, and tries to put each session on a different day before
    doubling up on one day.
 4. Anything that doesn't fit before the deadline is reported as unscheduled.
+
+Skipped entirely: tasks with "plan time" turned off, and Low priority tasks
+unless Settings says to include them.
 """
 
 from dataclasses import dataclass, field, replace
@@ -235,6 +238,10 @@ def suggest_sessions(
     result = ScheduleResult()
 
     for task in prioritize_tasks(tasks, now):
+        if not task.plan_sessions:
+            continue  # you said not to plan time for this one
+        if task.priority == "Low" and not prefs.suggest_low_priority:
+            continue  # Low priority: tracked as a deadline only (see Settings)
         remaining = remaining_minutes(task, existing_sessions)
         if remaining == 0:
             continue

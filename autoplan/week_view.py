@@ -18,14 +18,24 @@ from autoplan.models import Preferences
 
 # Background colors per category. Text is always dark so it reads in light and dark themes.
 CATEGORY_COLORS = {
-    "class": "#BFDBFE",
-    "work": "#FED7AA",
-    "gym": "#BBF7D0",
-    "personal": "#E9D5FF",
-    "other": "#E5E7EB",
-    "study": "#99F6E4",
-    "suggested": "#F0FDFA",
-    "conflict": "#FCA5A5",
+    "class": "#D5E4F0",
+    "work": "#F1E6CF",
+    "gym": "#D6EBDF",
+    "personal": "#E7DFF0",
+    "other": "#E6EAEE",
+    "study": "#BFE0DA",
+    "suggested": "#EEF6F4",
+    "conflict": "#F4CFCB",
+}
+
+# Stronger versions of the same colors, used for the Today timeline markers
+CATEGORY_ACCENTS = {
+    "class": "#4F82AD",
+    "work": "#B08A3E",
+    "gym": "#3F8F62",
+    "personal": "#8467AE",
+    "other": "#8C99A6",
+    "study": "#2B8577",
 }
 
 
@@ -90,7 +100,7 @@ def style_week_grid(labels: pd.DataFrame, cats: pd.DataFrame):
 
     def colors(_):
         return cats.map(
-            lambda c: f"background-color: {CATEGORY_COLORS[c]}; color: #111827" if c else ""
+            lambda c: f"background-color: {CATEGORY_COLORS[c]}; color: #14212B" if c else ""
         )
 
     return labels.style.apply(colors, axis=None)

@@ -35,6 +35,7 @@ def task_form(key: str, existing: Task | None = None) -> None:
         priority = c2.selectbox(
             "Priority", config.PRIORITIES, index=config.PRIORITIES.index(existing.priority if existing else "Medium")
         )
+        plan = st.checkbox("Plan study time for this", value=existing.plan_sessions if existing else True)
         submitted = st.form_submit_button("Save changes" if existing else "Add task", type="primary")
 
     if not submitted:
@@ -47,6 +48,7 @@ def task_form(key: str, existing: Task | None = None) -> None:
         estimated_minutes=int(minutes),
         priority=priority,
         status=existing.status if existing else "open",
+        plan_sessions=plan,
     )
     problems = task.validate()
     if problems:
@@ -69,7 +71,7 @@ for session in ui.accepted_sessions():
 
 
 def status_table(tasks: list[Task], key: str) -> None:
-    """Editable table where ticking 'Done' saves immediately."""
+    """Editable table: ticking Done or Plan saves right away."""
     df = pd.DataFrame(
         {
             "Done": [t.status == "done" for t in tasks],
@@ -77,24 +79,32 @@ def status_table(tasks: list[Task], key: str) -> None:
             "Due": [ui.fmt_dt(t.deadline) for t in tasks],
             "When": [ui.fmt_due(t.deadline, now) for t in tasks],
             "Estimate": [ui.fmt_minutes(t.estimated_minutes) for t in tasks],
-            "Planned": [ui.fmt_minutes(planned[t.id]) if planned.get(t.id) else "-" for t in tasks],
             "Priority": [t.priority for t in tasks],
+            "Plan": [t.plan_sessions for t in tasks],
+            "Planned": [ui.fmt_minutes(planned[t.id]) if planned.get(t.id) else "" for t in tasks],
             "From": [{"manual": "", "blackboard": "Blackboard", "gmail": "Email"}.get(t.source, t.source) for t in tasks],
         },
         index=[t.id for t in tasks],
     )
     edited = st.data_editor(
         df,
-        key=key,
+        key=ui.editor_key(key),
         hide_index=True,
         width="stretch",
-        disabled=["Task", "Due", "When", "Estimate", "Planned", "Priority", "From"],
-        column_config={"Done": st.column_config.CheckboxColumn(width="small")},
+        disabled=["Task", "Due", "When", "Estimate", "Priority", "Planned", "From"],
+        column_config={
+            "Done": st.column_config.CheckboxColumn(width="small"),
+            "Plan": st.column_config.CheckboxColumn(width="small", help="Suggest study sessions for this task"),
+        },
     )
-    changed = edited.index[edited["Done"] != df["Done"]]
-    if len(changed):
-        for task_id in changed:
+    done_changed = edited.index[edited["Done"] != df["Done"]]
+    plan_changed = edited.index[edited["Plan"] != df["Plan"]]
+    if len(done_changed) or len(plan_changed):
+        for task_id in done_changed:
             db.set_task_status(int(task_id), "done" if edited.at[task_id, "Done"] else "open")
+        for task_id in plan_changed:
+            db.set_task_planning(int(task_id), bool(edited.at[task_id, "Plan"]))
+        ui.reset_editor(key)
         st.rerun()
 
 

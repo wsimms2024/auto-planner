@@ -1,3 +1,21 @@
 [client]
 # Hide Streamlit's Deploy button and developer menu
 toolbarMode = "minimal"
+
+[theme]
+# GW navy and buff. Fonts and finer details live in autoplan/style.css
+base = "light"
+primaryColor = "#033C5A"
+backgroundColor = "#F5F7FA"
+secondaryBackgroundColor = "#E9EEF3"
+textColor = "#14212B"
+borderColor = "#D8E0E8"
+showWidgetBorder = true
+baseRadius = "8px"
+
+[theme.sidebar]
+backgroundColor = "#033C5A"
+secondaryBackgroundColor = "#0B4A6E"
+textColor = "#EEF3F7"
+primaryColor = "#C9B27C"
+borderColor = "#1A5A7E"

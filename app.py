@@ -7,10 +7,11 @@ To add a page, create a file in views/ and add a line below.
 
 import streamlit as st
 
-from autoplan import db
+from autoplan import db, ui
 
 st.set_page_config(page_title="AutoPlan", page_icon="🗓️", layout="wide")
 db.init_db()
+ui.apply_style()
 
 page = st.navigation(
     [

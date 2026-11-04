@@ -225,3 +225,17 @@ def test_short_gap_used_when_nothing_else_fits_before_deadline():
     result = scheduler.suggest_sessions([t], [cls], [], prefs(), now=at(MON, 9))
     assert [minutes(s) for s in result.sessions] == [45]
     assert result.unscheduled == {1: 15}
+
+
+
+def test_low_priority_and_unplanned_tasks_get_no_sessions():
+    deadline = at(MON + timedelta(days=3), 23, 59)
+    low = task(1, "Safety Awareness Training", deadline, 30, "Low")
+    off = task(2, "Event participation", deadline, 60)
+    off.plan_sessions = False
+    real = task(3, "Quiz prep", deadline, 45)
+    result = scheduler.suggest_sessions([low, off, real], [], [], prefs(), now=at(MON, 9))
+    assert {s.task_id for s in result.sessions} == {3}
+
+    with_low = scheduler.suggest_sessions([low, off, real], [], [], prefs(suggest_low_priority=True), now=at(MON, 9))
+    assert {s.task_id for s in with_low.sessions} == {1, 3}

@@ -1,0 +1,108 @@
+/*
+  AutoPlan look: GW navy + buff, Public Sans for the interface,
+  Fraunces for page titles. Colors are defined once here.
+*/
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Public+Sans:wght@400;500;600;700&display=swap");
+
+:root {
+  --navy: #033C5A;
+  --navy-soft: #0B4A6E;
+  --buff: #A99260;
+  --buff-light: #F3EDDF;
+  --ink: #14212B;
+  --muted: #5C6B78;
+  --line: #D8E0E8;
+  --surface: #FFFFFF;
+  --page: #F5F7FA;
+  --danger: #B3261E;
+}
+
+/* ---------- Type ---------- */
+html, body, .stApp, p, li, label, input, textarea, select, button,
+[data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"], [data-baseweb="tab"] {
+  font-family: "Public Sans", system-ui, sans-serif;
+}
+/* Leave Streamlit's icon font alone */
+[data-testid="stIconMaterial"], .material-symbols-rounded, [class*="material-symbols"] {
+  font-family: "Material Symbols Rounded" !important;
+}
+h1, h2, h3 { font-family: "Fraunces", Georgia, serif !important; color: var(--navy); letter-spacing: -0.01em; }
+h1 { font-weight: 600 !important; font-size: 2.4rem !important; padding-bottom: 0 !important; }
+h2, h3 { font-weight: 500 !important; }
+h3 { font-size: 1.3rem !important; }
+[data-testid="stCaptionContainer"] { color: var(--muted); }
+
+/* Narrower, calmer page */
+.block-container { max-width: 1120px; padding-top: 2.5rem; }
+
+/* ---------- Sidebar ---------- */
+[data-testid="stSidebar"] { border-right: none; }
+[data-testid="stSidebarNav"] a { border-radius: 6px; margin: 2px 8px; }
+[data-testid="stSidebarNav"] a[aria-current="page"] {
+  background: var(--navy-soft);
+  box-shadow: inset 3px 0 0 var(--buff);
+}
+[data-testid="stSidebarNav"] a span { font-weight: 500; }
+
+/* ---------- Buttons ---------- */
+.stButton button, .stFormSubmitButton button, [data-testid="stPopover"] button {
+  font-weight: 600;
+  border-radius: 8px;
+}
+.stButton button[kind="secondary"], .stFormSubmitButton button[kind="secondary"] {
+  background: var(--surface);
+  border-color: var(--line);
+}
+.stButton button:focus-visible { outline: 2px solid var(--buff); outline-offset: 2px; }
+
+/* ---------- Tabs ---------- */
+[data-baseweb="tab-list"] { gap: 1.25rem; border-bottom: 1px solid var(--line); }
+[data-baseweb="tab"] { padding-left: 0; padding-right: 0; font-weight: 500; }
+[data-baseweb="tab-highlight"] { background-color: var(--navy) !important; height: 2px; }
+
+/* Bordered containers (email rows, forms) */
+[data-testid="stVerticalBlockBorderWrapper"] { background: var(--surface); }
+
+/* ---------- Dashboard summary sentence ---------- */
+.ap-summary { font-size: 1.15rem; color: var(--ink); margin: 0.25rem 0 1.75rem; max-width: 62ch; line-height: 1.55; }
+.ap-summary b { color: var(--navy); font-weight: 700; }
+.ap-summary .late { color: var(--danger); }
+
+/* ---------- Today timeline ---------- */
+.ap-timeline { list-style: none; margin: 0.25rem 0 0; padding: 0; }
+.ap-timeline li {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.9rem;
+  align-items: start;
+  padding: 0.55rem 0;
+}
+.ap-timeline .t { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.9rem; padding-top: 0.15rem; text-align: right; }
+.ap-timeline .what {
+  border-left: 3px solid var(--cat, var(--line));
+  padding: 0.1rem 0 0.1rem 0.8rem;
+  line-height: 1.35;
+}
+.ap-timeline .what small { display: block; color: var(--muted); font-size: 0.82rem; margin-top: 0.1rem; }
+.ap-timeline li.past { opacity: 0.45; }
+.ap-timeline li.now .what { border-left-color: var(--buff); background: var(--buff-light); border-radius: 0 6px 6px 0; padding: 0.45rem 0.8rem; }
+.ap-timeline li.now .t { color: var(--navy); font-weight: 700; }
+.ap-timeline .pill { display: inline-block; font-size: 0.72rem; font-weight: 700; color: var(--navy); background: #fff; border: 1px solid var(--buff); border-radius: 99px; padding: 0 0.5rem; margin-left: 0.4rem; vertical-align: 1px; }
+.ap-empty { color: var(--muted); }
+
+/* ---------- Needs attention list ---------- */
+.ap-attn { list-style: none; margin: 0.25rem 0 0; padding: 0; }
+.ap-attn li { padding: 0.5rem 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 1rem; }
+.ap-attn li:last-child { border-bottom: none; }
+.ap-attn .when { color: var(--muted); white-space: nowrap; font-size: 0.9rem; }
+.ap-attn li.late .when { color: var(--danger); font-weight: 600; }
+.ap-attn li.short .when { color: #8A5A00; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---------- Sync status line ---------- */
+.ap-status { display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; padding-top: 0.5rem; color: var(--ink); }
+.ap-status .off { color: var(--muted); }
+.ap-status .ok::before { content: "●"; color: #3F8F62; margin-right: 0.4rem; font-size: 0.7rem; vertical-align: 2px; }
+.ap-status .bad::before { content: "●"; color: var(--danger); margin-right: 0.4rem; font-size: 0.7rem; vertical-align: 2px; }
+.ap-status small { color: var(--muted); margin-left: 0.3rem; }

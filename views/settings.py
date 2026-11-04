@@ -33,6 +33,7 @@ with st.form("settings"):
     c1, c2 = st.columns(2)
     buffer = c1.number_input("Buffer around events (minutes)", 0, 120, prefs.buffer_minutes, step=5)
     days = c2.number_input("Plan this many days ahead", 1, 28, prefs.planning_days)
+    low = st.checkbox("Suggest study time for Low priority tasks too", value=prefs.suggest_low_priority)
 
     saved = st.form_submit_button("Save settings", type="primary")
 
@@ -43,6 +44,7 @@ if saved:
         max_session_minutes=int(max_len),
         buffer_minutes=int(buffer),
         planning_days=int(days),
+        suggest_low_priority=low,
     )
     problems = new_prefs.validate()
     if problems:

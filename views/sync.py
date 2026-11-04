@@ -4,7 +4,7 @@ from datetime import datetime, time, timedelta
 
 import streamlit as st
 
-from autoplan import config, db, ui
+from autoplan import config, db, task_rules, ui
 from autoplan.integrations import gmail, google_auth, sync
 from autoplan.models import Task
 
@@ -29,22 +29,25 @@ def show_result(name: str, ok: bool, message: str) -> None:
 
 def status_badge(source: str, label: str, connected: bool) -> str:
     if not connected:
-        return f":gray[{label}: not connected]"
+        return f'<span class="off">{label}: not connected</span>'
     last_run, message = db.get_sync_state(source)
     if last_run is None:
-        return f"{label}: not synced yet"
-    icon = ":red[✕]" if message.startswith("Failed") else ":green[✓]"
-    return f"{icon} {label} · {ui.fmt_time(last_run)}"
+        return f'<span class="off">{label}: not synced yet</span>'
+    cls = "bad" if message.startswith("Failed") else "ok"
+    return f'<span class="{cls}">{label}<small>{ui.fmt_time(last_run)}</small></span>'
 
 
 signed_in = google_auth.is_signed_in()
 has_bb = bool(db.get_preference_value("blackboard_feed_url"))
-c1, c2 = st.columns([3, 1])
-c1.markdown("   ".join([
-    status_badge("google", "Calendar", signed_in),
-    status_badge("gmail", "Gmail", signed_in),
-    status_badge("blackboard", "Blackboard", has_bb),
-]))
+c1, c2 = st.columns([3, 1], vertical_alignment="center")
+c1.markdown(
+    '<div class="ap-status">'
+    + status_badge("google", "Calendar", signed_in)
+    + status_badge("gmail", "Gmail", signed_in)
+    + status_badge("blackboard", "Blackboard", has_bb)
+    + "</div>",
+    unsafe_allow_html=True,
+)
 if c2.button("Sync now", type="primary", width="stretch"):
     with st.spinner("Syncing..."):
         results = sync.sync_all()
@@ -152,8 +155,9 @@ with bb_tab:
 # ---------- Email review ----------
 
 def add_from_email(item, name, due, minutes, priority) -> None:
+    plan = task_rules.guess(name)[2]
     task = Task(name=name, deadline=due, estimated_minutes=int(minutes), priority=priority,
-                source="gmail", external_id=item.external_id)
+                plan_sessions=plan, source="gmail", external_id=item.external_id)
     problems = task.validate()
     if problems:
         st.error(" ".join(problems))
@@ -184,6 +188,7 @@ with review_tab:
     labels = {"blackboard": "Blackboard", "professor": "GW", "time-sensitive": "Deadline"}
     for item in items:
         default_due = item.detected_due or datetime.combine(item.received_at.date() + timedelta(days=3), time(23, 59))
+        guess_priority, guess_minutes, _ = task_rules.guess(item.subject)
         sender_name = item.sender.split("<")[0].split(" - ")[0].strip().strip('"') or item.sender
         due_text = f"due {ui.fmt_dt(item.detected_due)}" if item.detected_due else "no date found"
 
@@ -193,8 +198,8 @@ with review_tab:
                 f"**{item.subject}**  \n"
                 f":gray[{labels.get(item.kind, item.kind)} · {sender_name} · {due_text} · [open]({item.link})]"
             )
-            if c2.button("Add", key=f"add_{item.id}", help=f"Add as a task, {due_text}, 1 hour"):
-                add_from_email(item, item.subject[:120], default_due, 60, "Medium")
+            if c2.button("Add", key=f"add_{item.id}", help=f"Add as a task, {due_text}, {ui.fmt_minutes(guess_minutes)}"):
+                add_from_email(item, item.subject[:120], default_due, guess_minutes, guess_priority)
             with c3.popover("Edit"):
                 st.caption(item.snippet)
                 with st.form(f"inbox_{item.id}", border=False):
@@ -203,8 +208,8 @@ with review_tab:
                     due_day = a.date_input("Due", value=default_due.date())
                     due_time = b.time_input("Time", value=default_due.time(), step=900)
                     a, b = st.columns(2)
-                    est = a.number_input("Minutes", 15, 6000, 60, step=15)
-                    priority = b.selectbox("Priority", config.PRIORITIES, index=1)
+                    est = a.number_input("Minutes", 15, 6000, guess_minutes, step=15)
+                    priority = b.selectbox("Priority", config.PRIORITIES, index=config.PRIORITIES.index(guess_priority))
                     if st.form_submit_button("Add task", type="primary"):
                         add_from_email(item, name, datetime.combine(due_day, due_time), est, priority)
             if c4.button("✕", key=f"dis_{item.id}", help="Dismiss"):

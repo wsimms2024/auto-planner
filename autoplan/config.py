@@ -37,6 +37,7 @@ DEFAULT_PREFERENCES = {
     "max_session_minutes": 90,
     "buffer_minutes": 15,
     "planning_days": 7,
+    "suggest_low_priority": False,
 }
 
 # ---------- Integrations ----------
@@ -58,5 +59,4 @@ GMAIL_MAX_MESSAGES = 100
 # Pause between emails so a scan stays under Gmail's per-minute limit
 GMAIL_PAUSE_SECONDS = 0.25
 
-# Blackboard: time estimate given to newly imported assignments (change per task)
-BLACKBOARD_DEFAULT_MINUTES = 60
+# Priority and time estimates for imported tasks are guessed in task_rules.py

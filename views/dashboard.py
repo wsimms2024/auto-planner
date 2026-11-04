@@ -2,12 +2,14 @@
 
 from dataclasses import replace
 from datetime import date, datetime, timedelta
+from html import escape
 
 import pandas as pd
 import streamlit as st
 
 from autoplan import db, scheduler, ui
 from autoplan.integrations import sync
+from autoplan.week_view import CATEGORY_ACCENTS
 
 now = datetime.now()
 today = date.today()
@@ -38,41 +40,55 @@ today_blocks = [b for b in today_blocks if b.end.date() >= today and b.start.dat
 free_week = scheduler.find_free_slots(db.list_events(), prefs, today, today + timedelta(days=6), accepted, now)
 free_hours = sum((e - s).total_seconds() for s, e in free_week) / 3600
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Today", len(today_blocks))
-c2.metric("Open tasks", len(open_tasks))
-c3.metric("Overdue", len(overdue))
-c4.metric("Free this week", f"{free_hours:.0f}h")
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}{'s' if n != 1 else ''}"
 
-left, right = st.columns(2, gap="large")
+
+late = f'<span class="late"><b>{len(overdue)}</b> overdue</span>' if overdue else "nothing overdue"
+st.markdown(
+    f'<p class="ap-summary"><b>{len(today_blocks)}</b> {"thing" if len(today_blocks) == 1 else "things"} on today, '
+    f'<b>{len(open_tasks)}</b> open {"task" if len(open_tasks) == 1 else "tasks"}, {late}, '
+    f'and <b>{free_hours:.0f}</b> free hours this week.</p>',
+    unsafe_allow_html=True,
+)
+
+left, right = st.columns([1.1, 1], gap="large")
 
 with left:
     st.subheader("Today")
     if not today_blocks:
-        st.write("Nothing scheduled.")
-    for b in today_blocks:
-        when = f"{ui.fmt_time(b.start)}–{ui.fmt_time(b.end)}"
-        if b.end < now:
-            st.markdown(f":gray[{when} · {b.label}]")
-        elif b.start <= now:
-            st.markdown(f"**{when} · {b.label}** :blue[now]")
-        else:
-            st.markdown(f"{when} · {b.label}")
+        st.markdown('<p class="ap-empty">Nothing on the calendar.</p>', unsafe_allow_html=True)
+    else:
+        rows = []
+        for b in today_blocks:
+            state = "past" if b.end < now else "now" if b.start <= now else ""
+            pill = '<span class="pill">Now</span>' if state == "now" else ""
+            color = CATEGORY_ACCENTS.get(b.category, "#8C99A6")
+            rows.append(
+                f'<li class="{state}"><span class="t">{ui.fmt_time(b.start)}</span>'
+                f'<span class="what" style="--cat:{color}">{escape(b.label)}{pill}'
+                f"<small>until {ui.fmt_time(b.end)}</small></span></li>"
+            )
+        st.markdown(f'<ul class="ap-timeline">{"".join(rows)}</ul>', unsafe_allow_html=True)
 
 with right:
     st.subheader("Needs attention")
     if to_review:
-        st.page_link("views/sync.py", label=f"{to_review} email{'s' if to_review != 1 else ''} to review", icon="📬")
-    for t in overdue:
-        st.markdown(f":red[{t.name} · {ui.fmt_due(t.deadline, now)}]")
-    for t in due_soon:
-        st.markdown(f"{t.name} · :gray[{ui.fmt_due(t.deadline, now)}]")
-    for task_id, minutes in result.unscheduled.items():
-        st.markdown(f":orange[{task_by_id[task_id].name} · {ui.fmt_minutes(minutes)} won't fit]")
-    if not (to_review or overdue or due_soon or result.unscheduled):
-        st.write("All clear.")
+        st.page_link("views/sync.py", label=f"{plural(to_review, 'email')} to review", icon="📬")
+    items = [("late", t.name, ui.fmt_due(t.deadline, now)) for t in overdue]
+    items += [("", t.name, ui.fmt_due(t.deadline, now)) for t in due_soon]
+    items += [("short", task_by_id[i].name, f"{ui.fmt_minutes(m)} won't fit") for i, m in result.unscheduled.items()]
+    if items:
+        st.markdown(
+            '<ul class="ap-attn">'
+            + "".join(f'<li class="{cls}"><span>{escape(name)}</span><span class="when">{when}</span></li>' for cls, name, when in items)
+            + "</ul>",
+            unsafe_allow_html=True,
+        )
+    elif not to_review:
+        st.markdown('<p class="ap-empty">Nothing due in the next 3 days.</p>', unsafe_allow_html=True)
 
-st.divider()
+st.write("")
 plan_tab, week_tab = st.tabs(["Suggested sessions", "This week"])
 
 # ---------- Suggestions: one compact checklist ----------
@@ -93,6 +109,7 @@ with plan_tab:
             t = task_by_id[s.task_id]
             rows.append({
                 "Accept": False,
+                "Done": False,
                 "Skip": False,
                 "Day": f"{s.start:%a %b} {s.start.day}",
                 "Time": f"{ui.fmt_time(s.start)}–{ui.fmt_time(s.end)}",
@@ -105,28 +122,38 @@ with plan_tab:
             width="stretch",
             disabled=["Day", "Time", "Task", "Due"],
             column_config={
-                "Accept": st.column_config.CheckboxColumn(width="small"),
-                "Skip": st.column_config.CheckboxColumn(width="small", help="Don't suggest this time again"),
+                "Accept": st.column_config.CheckboxColumn(width="small", help="Put this session on your calendar"),
+                "Done": st.column_config.CheckboxColumn(width="small", help="Already finished: mark the task done"),
+                "Skip": st.column_config.CheckboxColumn(width="small", help="Stop suggesting time for this task"),
                 "Task": st.column_config.TextColumn(width="large"),
             },
-            key="suggestions_table",
+            key=ui.editor_key("suggestions"),
         )
         c1, c2, _ = st.columns([1, 1, 4])
         if c1.button("Save choices", type="primary"):
-            added = skipped = 0
-            for i, s in enumerate(suggestions):
-                if edited.at[i, "Accept"]:
+            done_ids = {suggestions[i].task_id for i in edited.index[edited["Done"]]}
+            skip_ids = {suggestions[i].task_id for i in edited.index[edited["Skip"]]} - done_ids
+            for task_id in done_ids:
+                db.set_task_status(task_id, "done")
+            for task_id in skip_ids:
+                db.set_task_planning(task_id, False)
+            added = 0
+            for i in edited.index[edited["Accept"]]:
+                s = suggestions[i]
+                if s.task_id not in done_ids | skip_ids:
                     db.add_study_session(replace(s, status="accepted"))
                     added += 1
-                elif edited.at[i, "Skip"]:
-                    db.add_study_session(replace(s, status="rejected"))
-                    skipped += 1
-            ui.flash(f"Added {added}, skipped {skipped}." if added or skipped else "Nothing checked.")
+            parts = [f"{added} added"] if added else []
+            parts += [f"{len(done_ids)} marked done"] if done_ids else []
+            parts += [f"{len(skip_ids)} won't be suggested again (turn back on under Tasks)"] if skip_ids else []
+            ui.flash(", ".join(parts).capitalize() + "." if parts else "Nothing checked.")
+            ui.reset_editor("suggestions")
             st.rerun()
         if c2.button(f"Accept all {len(suggestions)}"):
             for s in suggestions:
                 db.add_study_session(replace(s, status="accepted"))
             ui.flash(f"Added {len(suggestions)} study sessions.")
+            ui.reset_editor("suggestions")
             st.rerun()
 
     upcoming = [s for s in accepted if s.end >= now]
