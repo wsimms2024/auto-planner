@@ -72,6 +72,9 @@ def sync_all(now: datetime | None = None) -> list[tuple[str, bool, str]]:
         results.append(("Gmail", *sync_gmail(now)))
     if db.get_preference_value("blackboard_feed_url"):
         results.append(("Blackboard", *sync_blackboard(now)))
+    from autoplan import exam_mode
+
+    exam_mode.sync_exam_tasks(now)  # exams that just came in from the calendar get study tasks
     return results
 
 

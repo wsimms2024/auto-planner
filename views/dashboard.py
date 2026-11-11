@@ -7,7 +7,7 @@ from html import escape
 import pandas as pd
 import streamlit as st
 
-from autoplan import db, scheduler, ui
+from autoplan import db, exam_mode, scheduler, task_rules, ui
 from autoplan.integrations import sync
 from autoplan.week_view import CATEGORY_ACCENTS
 
@@ -25,6 +25,7 @@ if sync.due_for_auto_sync(now):
     if failed:
         st.warning(f"{', '.join(failed)} didn't sync. Details on the Sync page.")
 
+exam_mode.sync_exam_tasks(now)
 tasks = db.list_tasks()
 task_by_id = {t.id: t for t in tasks}
 open_tasks = [t for t in tasks if t.status == "open"]
@@ -107,6 +108,8 @@ with plan_tab:
             seen[s.task_id] = seen.get(s.task_id, 0) + 1
             part = f" ({seen[s.task_id]}/{totals[s.task_id]})" if totals[s.task_id] > 1 else ""
             t = task_by_id[s.task_id]
+            if task_rules.is_exam(t.name):
+                part += " · exam prep"
             rows.append({
                 "Accept": False,
                 "Done": False,

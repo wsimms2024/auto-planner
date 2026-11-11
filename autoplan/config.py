@@ -66,6 +66,13 @@ DEFAULT_PREFERENCES = {
     "briefing_time": "08:00",
 }
 
+# Exam mode: review sessions are spread over this many days before an exam,
+# and none are placed in the last EXAM_GAP_HOURS before it starts.
+EXAM_PREP_DAYS = 7
+EXAM_GAP_HOURS = 2
+# Study time for an exam that comes in from your calendar
+EXAM_STUDY_MINUTES = 360
+
 # Claude model used by the Telegram planner. Haiku is cheaper, Sonnet reasons better.
 CLAUDE_MODEL = "claude-sonnet-5-5"
 

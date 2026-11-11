@@ -239,3 +239,29 @@ def test_low_priority_and_unplanned_tasks_get_no_sessions():
 
     with_low = scheduler.suggest_sessions([low, off, real], [], [], prefs(suggest_low_priority=True), now=at(MON, 9))
     assert {s.task_id for s in with_low.sessions} == {1, 3}
+
+
+# ---------- Exam mode ----------
+
+def test_exam_days_spread_toward_the_exam():
+    week = [MON + timedelta(days=i) for i in range(7)]
+    days = scheduler.exam_days(week, 4, set())
+    assert [(d - MON).days for d in days] == [1, 3, 4, 6]
+    assert scheduler.exam_days(week, 10, set()) == week
+    assert MON + timedelta(days=6) not in scheduler.exam_days(week, 2, {MON + timedelta(days=6)})
+
+
+def test_exam_sessions_spread_over_the_week_not_crammed():
+    exam_at = at(MON + timedelta(days=7), 10)  # next Monday 10am
+    t = task(1, "ACCY 2001 Midterm", exam_at, 360, "High")
+    result = scheduler.suggest_sessions([t], [], [], prefs(), now=at(MON, 9), days_ahead=8)
+    days = [s.start.date() for s in result.sessions]
+    assert len(result.sessions) == 4 and len(set(days)) == 4  # 4 x 90 min, all on different days
+    assert min(days) > MON  # not starting today, a week out
+    assert max(s.end for s in result.sessions) <= exam_at - timedelta(hours=2)
+
+
+def test_non_exam_big_task_still_starts_early():
+    t = task(1, "Final Project", at(MON + timedelta(days=7), 10), 360, "High")
+    result = scheduler.suggest_sessions([t], [], [], prefs(), now=at(MON, 9), days_ahead=8)
+    assert result.sessions[0].start.date() == MON

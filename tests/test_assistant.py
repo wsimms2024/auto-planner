@@ -70,7 +70,7 @@ def test_add_event_refuses_overlap_unless_allowed():
 
 def test_add_task_guesses_defaults_and_mark_done():
     out = planner_tools.add_task("Stats midterm", "2026-11-20")
-    assert out["priority"] == "High" and out["estimate_minutes"] == 180
+    assert out["priority"] == "High" and out["estimate_minutes"] == 360  # exam: 6h of review
     assert planner_tools.mark_task_done("stats mid")["marked_done"] == "Stats midterm"
     assert "error" in planner_tools.mark_task_done("nonexistent thing xyz")
 

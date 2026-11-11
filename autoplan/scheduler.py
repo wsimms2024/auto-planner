@@ -19,6 +19,10 @@ How suggestions are made (suggest_sessions):
    doubling up on one day.
 4. Anything that doesn't fit before the deadline is reported as unscheduled.
 
+Exam mode: for exams (see task_rules.is_exam), sessions are spread across
+the EXAM_PREP_DAYS before the exam, one per day, weighted toward the last
+few days, instead of being packed in as early as possible.
+
 Skipped entirely: tasks with "plan time" turned off, and Low priority tasks
 unless Settings says to include them.
 """
@@ -26,6 +30,7 @@ unless Settings says to include them.
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 
+from autoplan import config, task_rules
 from autoplan.models import Event, Preferences, StudySession, Task
 
 # A block of time: (start, end)
@@ -253,9 +258,26 @@ def suggest_sessions(
         rejected = [(s.start, s.end) for s in existing_sessions if s.task_id == task.id and s.status in ("rejected", "missed")]
         days_used = {s.start.date() for s in accepted if s.task_id == task.id}
 
+        exam = task_rules.is_exam(task.name) and task.deadline > now
+        targets: list[date] = []
+        if exam:
+            window_start = max(now, task.deadline - timedelta(days=config.EXAM_PREP_DAYS))
+            limit = task.deadline - timedelta(hours=config.EXAM_GAP_HOURS)
+            rejected = rejected + [(datetime.min, window_start)]  # nothing before the prep window
+            open_days = sorted({
+                s.date() for s, e in subtract(free, rejected)
+                if s < limit and _minutes(s, min(e, limit)) >= min_len
+            })
+            targets = exam_days(open_days, -(-remaining // max_len), days_used)
+
         while remaining > 0:
             chunk = max(min(remaining, max_len), min_len)
-            placed = _place(subtract(free, rejected), limit, chunk, min_len, days_used)
+            view = subtract(free, rejected)
+            placed = None
+            if targets:
+                placed = _place_on_day(view, targets.pop(0), limit, chunk, min_len)
+            if placed is None:
+                placed = _place(view, limit, chunk, min_len, days_used)
             if placed is None:
                 result.unscheduled[task.id] = remaining
                 break
@@ -271,6 +293,35 @@ def suggest_sessions(
 
     result.sessions.sort(key=lambda s: s.start)
     return result
+
+
+def exam_days(open_days: list[date], sessions: int, days_used: set[date]) -> list[date]:
+    """
+    Pick which days get an exam review session: spread out, ending on the
+    last open day before the exam. 4 sessions over 7 open days -> days 2, 4, 5, 7.
+    Days that already have a session for this exam are skipped.
+    """
+    days = [d for d in open_days if d not in days_used]
+    if not days or sessions <= 0:
+        return []
+    if sessions >= len(days):
+        return days
+    return [days[int((i + 1) * len(days) / sessions + 0.5) - 1] for i in range(sessions)]
+
+
+def _place_on_day(free: list[TimeSlot], day: date, limit: datetime, chunk: int, min_len: int) -> TimeSlot | None:
+    """Earliest spot for one session on a specific day (full length first, then shorter)."""
+    for full_length in (True, False):
+        for s, e in free:
+            if s.date() != day or s >= limit:
+                continue
+            usable = _minutes(s, min(e, limit))
+            usable -= usable % SNAP_MINUTES
+            if usable >= chunk:
+                return s, s + timedelta(minutes=chunk)
+            if not full_length and usable >= min_len:
+                return s, s + timedelta(minutes=usable)
+    return None
 
 
 def _place(free: list[TimeSlot], limit: datetime, chunk: int, min_len: int, days_used: set[date]) -> TimeSlot | None:

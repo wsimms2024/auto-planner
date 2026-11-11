@@ -138,18 +138,20 @@ overlap check, color-coded weekly grid, dashboard.
 - Tests: overlaps, approaching deadlines, not enough time, multi-session
   tasks, recurring events, completed tasks, scheduling across days
 
-### Phase 4: Integrations (in progress)
+### ~~Phase 4: Integrations~~
 - Google Calendar sync both ways (events in, study sessions out with phone reminders)
 - Gmail scan for Blackboard notifications, professor announcements and other
   time-sensitive mail, with a review list
 - Blackboard assignments imported as tasks from the calendar feed
 
-### Phase 5: Usability and more integrations
-1. Interface polish, including a better phone layout
-2. More validation, error handling and scenario tests
-3. Optional: Tailscale so the dashboard works on your phone away from home
-4. Automatic rescheduling of unfinished sessions
-5. Gym schedule preferences
-6. Workload analytics
-7. Scheduling based on your past productivity
-8. Optional AI-generated scheduling suggestions (including smarter email triage)
+### Phase 5: Assistant and smarter planning (in progress)
+- ~~Telegram planner with Claude, morning text, study-session follow-ups~~
+- ~~Gym preferences~~
+- ~~Exam mode: review sessions spread over the week before an exam~~
+- Robinhood holdings in the dashboard and bot (read-only)
+- Blackboard scraper: assignment details, a Prep button, and a grade tracker
+
+### Later
+- Tailscale so the dashboard works on your phone away from home
+- Workload analytics
+- Scheduling based on your past productivity
