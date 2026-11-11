@@ -150,6 +150,13 @@ class BBClient:
             return None  # e.g. 404 for a course feature that isn't used
         return r.json()
 
+    def try_get(self, path: str, **params) -> tuple[int, object]:
+        """Like get, but never raises: returns (status, json or None). For endpoints students may not be allowed to use."""
+        url = path if path.startswith("http") else config.BLACKBOARD_URL + path
+        r = self.ctx.request.get(url, params=params or None, fail_on_status_code=False)
+        is_json = r.headers.get("content-type", "").startswith("application/json")
+        return r.status, (r.json() if r.ok and is_json else None)
+
     def get_all(self, path: str, **params) -> list:
         """Follow Blackboard's paging and return every result."""
         out, page = [], self.get(path, **params)
@@ -180,6 +187,7 @@ class Course:
     name: str
     term: str
     url: str
+    syllabus: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -311,9 +319,10 @@ def fetch(client: BBClient, now: datetime) -> dict:
 
     result = {"courses": courses, "assignments": [], "grades": []}
     for course in courses:
-        columns = client.get_all(f"{API}/v2/courses/{course.id}/gradebook/columns", limit=200)
-        my_grades = client.get_all(f"{API}/v2/courses/{course.id}/gradebook/users/{me['id']}", limit=200)
+        columns = _columns(client, course.id)
+        my_grades = _my_grades(client, course.id, me["id"], columns)
         contents = _contents(client, course.id)
+        course.syllabus = _download_syllabus(client, course, contents)
         assignments = parse_assignments(course, contents, columns)
         for a in assignments:
             if a.due and now - timedelta(days=1) <= a.due <= now + timedelta(days=config.BLACKBOARD_FILES_DAYS_AHEAD):
@@ -321,6 +330,63 @@ def fetch(client: BBClient, now: datetime) -> dict:
         result["assignments"] += assignments
         result["grades"] += parse_grades(course, columns, my_grades)
     return result
+
+
+def _columns(client: BBClient, course_id: str) -> list[dict]:
+    for version in ("v2", "v1"):
+        status, page = client.try_get(f"{API}/{version}/courses/{course_id}/gradebook/columns", limit=200)
+        if status == 200 and page is not None:
+            return client.get_all(f"{API}/{version}/courses/{course_id}/gradebook/columns", limit=200)
+    return []
+
+
+def _my_grades(client: BBClient, course_id: str, user_id: str, columns: list[dict]) -> list[dict]:
+    """
+    Your scores. Students often can't use the all-grades endpoint, so fall back
+    to asking column by column. Each fallback stops after its first refusal.
+    """
+    status, page = client.try_get(f"{API}/v2/courses/{course_id}/gradebook/users/{user_id}", limit=200)
+    if status == 200 and page and page.get("results"):
+        return client.get_all(f"{API}/v2/courses/{course_id}/gradebook/users/{user_id}", limit=200)
+    for version in ("v1", "v2"):
+        grades, refused = [], False
+        for i, col in enumerate(columns):
+            status, g = client.try_get(f"{API}/{version}/courses/{course_id}/gradebook/columns/{col['id']}/users/{user_id}")
+            if status in (401, 403, 404) and i == 0:
+                refused = True
+                break
+            if status == 200 and g:
+                grades.append({
+                    "columnId": col["id"],
+                    "score": g.get("score"),
+                    "displayGrade": g.get("displayGrade") or ({"text": g["text"]} if g.get("text") else None),
+                    "status": g.get("status"),
+                    "exempt": g.get("exempt"),
+                })
+        if not refused and grades:
+            return grades
+    return []
+
+
+def _download_syllabus(client: BBClient, course: Course, contents: list[dict]) -> list[str]:
+    """Files from any content item with 'syllabus' in its title (for the weight suggestions)."""
+    paths = []
+    for item in contents:
+        if "syllabus" not in item.get("title", "").lower():
+            continue
+        for att in client.get_all(f"{API}/v1/courses/{course.id}/contents/{item['id']}/attachments") or []:
+            name = re.sub(r'[\\/:*?"<>|]', "_", att.get("fileName", "syllabus"))
+            dest = FILES_DIR / course.code.replace(" ", "_") / "syllabus" / name
+            if dest.exists() or client.download(f"{API}/v1/courses/{course.id}/contents/{item['id']}/attachments/{att['id']}/download", dest):
+                paths.append(str(dest))
+        if item.get("body") and not paths:
+            text = html_to_text(item["body"])
+            if len(text) > 200:
+                dest = FILES_DIR / course.code.replace(" ", "_") / "syllabus" / "syllabus_page.txt"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(text, encoding="utf-8")
+                paths.append(str(dest))
+    return paths
 
 
 def _contents(client: BBClient, course_id: str) -> list[dict]:
@@ -389,19 +455,42 @@ def sync(now: datetime | None = None) -> str:
 # ---------- Troubleshooting ----------
 
 def probe() -> str:
-    """Save raw API responses to data/bb_debug so the parsing can be checked against GW's real data."""
+    """
+    Save raw API responses to data/bb_debug so the reader can be adjusted to GW's setup.
+    For the first two courses it tries every known way to read grades and records
+    each one's status code and a sample, so it's obvious which ones GW allows.
+    """
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
     with BBClient() as client:
         me = client.get(f"{API}/v1/users/me")
+        uid = me["id"] if me else ""
         dump = {"me": {k: me.get(k) for k in ("id", "userName")} if me else None}
-        memberships = client.get_all(f"{API}/v1/users/{me['id']}/courses", expand="course", limit=100) if me else []
-        dump["memberships"] = memberships
+        memberships = client.get_all(f"{API}/v1/users/{uid}/courses", expand="course", limit=100) if me else []
         courses = parse_courses(memberships)
         dump["current_courses"] = [c.__dict__ for c in courses]
+        dump["grade_sources"] = {}
         for c in courses[:2]:
-            dump[f"{c.code} columns"] = client.get_all(f"{API}/v2/courses/{c.id}/gradebook/columns", limit=200)
-            dump[f"{c.code} my grades"] = client.get_all(f"{API}/v2/courses/{c.id}/gradebook/users/{me['id']}", limit=200)
-            dump[f"{c.code} contents"] = client.get_all(f"{API}/v1/courses/{c.id}/contents", recursive="true", limit=200)
+            columns = _columns(client, c.id)
+            col = columns[0]["id"] if columns else "NONE"
+            candidates = {
+                "v2 columns": f"{API}/v2/courses/{c.id}/gradebook/columns",
+                "v1 columns": f"{API}/v1/courses/{c.id}/gradebook/columns",
+                "v2 my grades": f"{API}/v2/courses/{c.id}/gradebook/users/{uid}",
+                "v1 one column, my grade": f"{API}/v1/courses/{c.id}/gradebook/columns/{col}/users/{uid}",
+                "v2 one column, my grade": f"{API}/v2/courses/{c.id}/gradebook/columns/{col}/users/{uid}",
+                "v2 one column, my attempts": f"{API}/v2/courses/{c.id}/gradebook/columns/{col}/attempts?userId={uid}",
+                "ultra grades": f"/learn/api/v1/courses/{c.id}/gradebook/grades?userId={uid}",
+                "ultra columns": f"/learn/api/v1/courses/{c.id}/gradebook/columns",
+                "ultra my grades": f"/learn/api/v1/users/{uid}/courses/{c.id}/gradebook/grades",
+            }
+            results = {}
+            for label, path in candidates.items():
+                status, body = client.try_get(path)
+                sample = body.get("results", body)[:2] if isinstance(body, dict) and isinstance(body.get("results"), list) else body
+                results[label] = {"status": status, "sample": json.loads(json.dumps(sample, default=str))[:2] if isinstance(sample, list) else sample}
+            dump["grade_sources"][c.code] = results
+            dump[f"{c.code} columns (first 5)"] = columns[:5]
+            dump[f"{c.code} contents (first 5)"] = client.get_all(f"{API}/v1/courses/{c.id}/contents", recursive="true", limit=200)[:5]
     path = DEBUG_DIR / f"probe_{datetime.now():%Y%m%d_%H%M}.json"
     path.write_text(json.dumps(dump, indent=2, default=str), encoding="utf-8")
     return str(path)

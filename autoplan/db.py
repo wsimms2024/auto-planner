@@ -103,6 +103,30 @@ CREATE TABLE IF NOT EXISTS bb_grade_items (
     is_total  INTEGER NOT NULL DEFAULT 0 -- Blackboard's overall/total column
 );
 
+CREATE TABLE IF NOT EXISTS grade_entries (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id  TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    score      REAL,
+    possible   REAL,
+    category   TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS grade_overrides (
+    item_id  TEXT PRIMARY KEY,          -- Blackboard gradebook column id
+    score    REAL,                      -- your correction, NULL = use Blackboard's
+    possible REAL,
+    category TEXT,
+    ignored  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS course_grade_settings (
+    course_id TEXT PRIMARY KEY,
+    mode      TEXT NOT NULL DEFAULT 'calculate',  -- calculate / blackboard_total
+    weights   TEXT NOT NULL DEFAULT '{}'           -- JSON {category: percent}
+);
+
 CREATE TABLE IF NOT EXISTS prep_notes (
     task_id    INTEGER PRIMARY KEY,
     created_at TEXT NOT NULL,
@@ -175,6 +199,7 @@ MIGRATIONS = [
     ("events", "skip_dates", "TEXT"),
     ("events", "google_event_id", "TEXT"),   # copy on the Google "AutoPlan" calendar
     ("events", "google_hash", "TEXT"),       # what was last sent, to spot edits
+    ("bb_courses", "syllabus", "TEXT"),      # JSON list of downloaded syllabus file paths
 ]
 
 INDEXES = """
@@ -737,10 +762,10 @@ def save_bb_courses(courses, now: datetime, db_path: Optional[Path] = None) -> N
     with get_connection(db_path) as conn:
         for c in courses:
             conn.execute(
-                "INSERT INTO bb_courses (id, code, name, term, url, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                "INSERT INTO bb_courses (id, code, name, term, url, syllabus, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET code = excluded.code, name = excluded.name, term = excluded.term, "
-                "url = excluded.url, updated_at = excluded.updated_at",
-                (c.id, c.code, c.name, c.term, c.url, now.isoformat()),
+                "url = excluded.url, syllabus = COALESCE(excluded.syllabus, bb_courses.syllabus), updated_at = excluded.updated_at",
+                (c.id, c.code, c.name, c.term, c.url, json.dumps(c.syllabus) if getattr(c, "syllabus", None) else None, now.isoformat()),
             )
 
 
@@ -776,7 +801,7 @@ def list_bb_courses(db_path: Optional[Path] = None) -> list[dict]:
     with get_connection(db_path) as conn:
         latest = conn.execute("SELECT MAX(term) FROM bb_courses").fetchone()[0] or ""
         rows = conn.execute("SELECT * FROM bb_courses WHERE term = ? ORDER BY code", (latest,)).fetchall()
-        return [dict(r) for r in rows]
+        return [{**dict(r), "syllabus": json.loads(r["syllabus"] or "[]")} for r in rows]
 
 
 def list_bb_grades(course_id: str, db_path: Optional[Path] = None) -> list[dict]:
@@ -795,6 +820,72 @@ def get_bb_assignment_for_task(task_id: int, db_path: Optional[Path] = None) -> 
     if not row:
         return None
     return {**dict(row), "due": _dt(row["due"]), "attachments": json.loads(row["attachments"])}
+
+
+# ---------- Your grade entries, corrections and weights ----------
+
+def add_grade_entry(course_id: str, name: str, score: float | None, possible: float | None,
+                    category: str | None = None, db_path: Optional[Path] = None) -> int:
+    with get_connection(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO grade_entries (course_id, name, score, possible, category, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (course_id, name.strip(), score, possible, category, datetime.now().isoformat()),
+        )
+        return cur.lastrowid
+
+
+def update_grade_entry(entry_id: int, db_path: Optional[Path] = None, **values) -> None:
+    allowed = {k: v for k, v in values.items() if k in ("name", "score", "possible", "category")}
+    if not allowed:
+        return
+    with get_connection(db_path) as conn:
+        conn.execute(f"UPDATE grade_entries SET {', '.join(f'{k} = ?' for k in allowed)} WHERE id = ?", (*allowed.values(), entry_id))
+
+
+def delete_grade_entry(entry_id: int, db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("DELETE FROM grade_entries WHERE id = ?", (entry_id,))
+
+
+def list_grade_entries(course_id: str, db_path: Optional[Path] = None) -> list[dict]:
+    with get_connection(db_path) as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM grade_entries WHERE course_id = ? ORDER BY created_at", (course_id,))]
+
+
+def set_grade_override(item_id: str, db_path: Optional[Path] = None, **values) -> None:
+    """Correct a Blackboard item: score, possible, category, or ignored (True/False)."""
+    current = get_grade_overrides([item_id], db_path).get(item_id, {"score": None, "possible": None, "category": None, "ignored": 0})
+    current.update({k: v for k, v in values.items() if k in ("score", "possible", "category", "ignored")})
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO grade_overrides (item_id, score, possible, category, ignored) VALUES (?, ?, ?, ?, ?)",
+            (item_id, current["score"], current["possible"], current["category"], int(bool(current["ignored"]))),
+        )
+
+
+def get_grade_overrides(item_ids: list[str], db_path: Optional[Path] = None) -> dict[str, dict]:
+    if not item_ids:
+        return {}
+    with get_connection(db_path) as conn:
+        rows = conn.execute(f"SELECT * FROM grade_overrides WHERE item_id IN ({','.join('?' * len(item_ids))})", item_ids).fetchall()
+    return {r["item_id"]: dict(r) for r in rows}
+
+
+def get_course_grade_settings(course_id: str, db_path: Optional[Path] = None) -> dict:
+    with get_connection(db_path) as conn:
+        row = conn.execute("SELECT * FROM course_grade_settings WHERE course_id = ?", (course_id,)).fetchone()
+    return {"mode": row["mode"], "weights": json.loads(row["weights"])} if row else {"mode": "calculate", "weights": {}}
+
+
+def set_course_grade_settings(course_id: str, mode: str | None = None, weights: dict | None = None, db_path: Optional[Path] = None) -> None:
+    current = get_course_grade_settings(course_id, db_path)
+    if mode:
+        current["mode"] = mode
+    if weights is not None:
+        current["weights"] = {k: float(v) for k, v in weights.items() if v}
+    with get_connection(db_path) as conn:
+        conn.execute("INSERT OR REPLACE INTO course_grade_settings (course_id, mode, weights) VALUES (?, ?, ?)",
+                     (course_id, current["mode"], json.dumps(current["weights"])))
 
 
 def save_prep(task_id: int, content: dict, db_path: Optional[Path] = None) -> None:

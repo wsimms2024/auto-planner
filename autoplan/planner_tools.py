@@ -416,39 +416,72 @@ def prep_assignment(task_name: str) -> dict:
     return {"task": task.name, **{k: plan[k] for k in ("summary", "requirements", "materials", "steps", "estimated_minutes") if k in plan}}
 
 
+def _course_match(course: str) -> dict | None:
+    key = course.lower().replace(" ", "")
+    return next((c for c in db.list_bb_courses() if key in (c["code"] + c["name"]).lower().replace(" ", "")), None)
+
+
 def get_grades(course: str | None = None) -> dict:
-    """Current standing per course from the Blackboard gradebook."""
+    """Current standing per course: Blackboard plus Will's own entries and corrections, weighted if set up."""
     from autoplan import grades
 
+    match = _course_match(course) if course else None
+    if course and not match:
+        return {"courses": [], "note": f"No course matching '{course}'."}
     rows = []
     for c in db.list_bb_courses():
-        if course and course.lower().replace(" ", "") not in (c["code"] + c["name"]).lower().replace(" ", ""):
+        if match and c["id"] != match["id"]:
             continue
-        items = db.list_bb_grades(c["id"])
-        s = grades.summary(items)
-        recent = [i for i in items if not i["is_total"] and i["score"] is not None][-3:]
+        s = grades.standing(c["id"])
+        recent = [i for i in s["items"] if not i["is_total"] and not i["ignored"] and i["score"] is not None][-3:]
         rows.append({
-            "course": c["code"], "name": c["name"], "percent": s["percent"], "letter": s["letter"],
+            "course": c["code"], "name": c["name"], "percent": s["shown_percent"], "letter": s["shown_letter"],
+            "how": "Blackboard total" if s["mode"] == "blackboard_total" else ("weighted" if s["weighted"] else "points"),
             "blackboard_total": s["blackboard_total"], "graded": s["graded_count"], "remaining": s["remaining_count"],
-            "recent": [f"{i['name']}: {i['display'] or i['score']}" for i in recent],
+            "maybe_out_of_date": [i["name"] for i in s["stale"]],
+            "recent": [f"{i['name']}: {i['score']:g}/{i['possible']:g}" for i in recent],
         })
     if not rows:
-        return {"courses": [], "note": "No grades saved. Blackboard may not be connected yet."}
-    return {"courses": rows, "note": "Points-based; weighted classes are estimates."}
+        return {"courses": [], "note": "No classes found. Blackboard may not be connected yet."}
+    return {"courses": rows}
 
 
 def grade_needed(course: str, target_letter: str = "B+") -> dict:
     """What average he needs on the remaining work to finish a course with a target letter."""
     from autoplan import grades
 
-    match = [c for c in db.list_bb_courses() if course.lower().replace(" ", "") in (c["code"] + c["name"]).lower().replace(" ", "")]
-    if not match:
+    c = _course_match(course)
+    if not c:
         return {"error": f"No course matching '{course}'."}
-    c = match[0]
     if target_letter not in dict(grades.LETTER_CUTOFFS):
         return {"error": f"Use a letter like {', '.join(l for l, _ in grades.LETTER_CUTOFFS[:6])}."}
-    need = grades.needed_for(db.list_bb_grades(c["id"]), grades.cutoff(target_letter))
-    return {"course": c["code"], "target": target_letter, **need}
+    s = grades.standing(c["id"])
+    need = grades.needed_for(s["items"], grades.cutoff(target_letter), s["weights"])
+    return {"course": c["code"], "target": target_letter, "weighted": s["weighted"], **need}
+
+
+def log_grade(course: str, item: str, score: float, possible: float, category: str | None = None) -> dict:
+    """
+    Record a grade Will tells you about. If it matches a Blackboard item in that class,
+    it corrects that item; otherwise it's added as his own entry.
+    """
+    from autoplan import grades
+
+    c = _course_match(course)
+    if not c:
+        return {"error": f"No course matching '{course}'."}
+    bb = db.list_bb_grades(c["id"])
+    names = {i["name"].lower(): i for i in bb if not i["is_total"]}
+    q = item.lower().strip()
+    hit = next((i for n, i in names.items() if q == n or q in n or n in q), None)
+    if hit is None:
+        close = difflib.get_close_matches(q, list(names), n=1, cutoff=0.75)
+        hit = names[close[0]] if close else None
+    if hit:
+        db.set_grade_override(hit["id"], score=float(score), possible=float(possible), **({"category": category} if category else {}))
+        return {"added": f"{c['code']} {hit['name']}: {score:g}/{possible:g}", "note": "Corrected the Blackboard item."}
+    db.add_grade_entry(c["id"], item, float(score), float(possible), category or grades.guess_category(item))
+    return {"added": f"{c['code']} {item}: {score:g}/{possible:g}"}
 
 
 # ---------- Workouts ----------
@@ -570,7 +603,13 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"task_name": {"type": "string"}}, "required": ["task_name"]}},
     {"name": "prep_assignment", "description": "Have Claude read an assignment's instructions and files and make a plan (requirements, materials, steps, time). Use when Will asks what he needs or how to approach an assignment. Never write the assignment for him.",
      "input_schema": {"type": "object", "properties": {"task_name": {"type": "string"}}, "required": ["task_name"]}},
-    {"name": "get_grades", "description": "Current grade per course from Blackboard (optionally one course).",
+    {"name": "log_grade", "description": "Record a grade Will got (e.g. 'got 18/20 on quiz 7 in ISTM 4205'). Corrects the matching Blackboard item or adds it.",
+     "input_schema": {"type": "object", "properties": {
+         "course": {"type": "string"}, "item": {"type": "string"},
+         "score": {"type": "number"}, "possible": {"type": "number"},
+         "category": {"type": "string", "enum": ["Exams", "Quizzes", "Assignments", "Projects", "Participation", "Other"]}},
+      "required": ["course", "item", "score", "possible"]}},
+    {"name": "get_grades", "description": "Current grade per course (Blackboard plus Will's own entries, weighted if he set syllabus weights). Mention any items flagged as maybe out of date.",
      "input_schema": {"type": "object", "properties": {"course": {"type": "string"}}}},
     {"name": "grade_needed", "description": "What average Will needs on the remaining work to finish a course with a target letter grade.",
      "input_schema": {"type": "object", "properties": {
@@ -609,6 +648,7 @@ FUNCTIONS = {
     "prep_assignment": prep_assignment,
     "get_grades": get_grades,
     "grade_needed": grade_needed,
+    "log_grade": log_grade,
     "log_workout": log_workout,
     "log_recovery": log_recovery,
     "get_workout_plan": get_workout_plan,

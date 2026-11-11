@@ -100,8 +100,12 @@ Telegram bot tells you to reconnect.
 - **Tasks → Details and prep**: instructions, files, and a **Prep** button.
   Claude reads the assignment and returns requirements, materials, steps with
   times, and concepts to review. It plans; it doesn't do the assignment.
-- **Grades**: points-based standing per class and what you need on the rest
-  for a target letter. Edit the scale in `autoplan/grades.py`.
+- **Grades**: Blackboard's gradebook plus your own entries and corrections
+  (edit right in each class's table, or text the bot "got 18/20 on quiz 7 in
+  ISTM 4205"). Add syllabus weights per class (or let Claude suggest them from
+  the syllabus) for a weighted standing, or just show Blackboard's total.
+  Past-due items still ungraded after two weeks are flagged as possibly stale.
+  Edit the letter scale in `autoplan/grades.py`.
 - The bot answers "what do I need for Assignment 6?" and "what's my grade in
   ISTM 4205?"
 

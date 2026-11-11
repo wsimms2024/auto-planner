@@ -109,6 +109,18 @@ class FakeBB:
             return [{"id": "f1", "fileName": "a6_instructions.pdf"}]
         return []
 
+    def try_get(self, path, **params):
+        """Like GW: the all-grades endpoint is refused for students; per-column grades work."""
+        if path.endswith("gradebook/columns"):
+            return (200, {"results": COLUMNS if "_101_1" in path else []})
+        if "/v2/courses/" in path and path.endswith("/gradebook/users/_u1"):
+            return (403, None)
+        if "/v1/courses/_101_1/gradebook/columns/" in path and path.endswith("/users/_u1"):
+            col = path.split("/columns/")[1].split("/")[0]
+            g = next((g for g in MY_GRADES if g["columnId"] == col), None)
+            return (200, {"columnId": col, "score": g["score"], "text": (g.get("displayGrade") or {}).get("text")}) if g else (404, None)
+        return (404, None)
+
     def download(self, path, dest):
         self.downloads.append(path)
         dest.parent.mkdir(parents=True, exist_ok=True)
