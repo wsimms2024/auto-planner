@@ -35,6 +35,21 @@ with st.form("settings"):
     days = c2.number_input("Plan this many days ahead", 1, 28, prefs.planning_days)
     low = st.checkbox("Suggest study time for Low priority tasks too", value=prefs.suggest_low_priority)
 
+    st.subheader("Gym")
+    st.caption("Used when you ask the Telegram bot when to go, and in the morning text.")
+    gym_days = st.multiselect(
+        "Gym days", list(range(7)), default=prefs.gym_days, format_func=lambda d: ui.DAY_NAMES[d]
+    )
+    c1, c2, c3 = st.columns(3)
+    gym_minutes = c1.number_input("Session length (minutes)", 15, 300, prefs.gym_minutes, step=15)
+    gym_earliest = c2.time_input("Earliest start", value=prefs.gym_earliest, step=900)
+    gym_latest = c3.time_input("Done by", value=prefs.gym_latest, step=900)
+
+    st.subheader("Morning text")
+    c1, c2 = st.columns(2)
+    briefing_on = c1.checkbox("Send a morning briefing on Telegram", value=prefs.briefing_on)
+    briefing_time = c2.time_input("Send at", value=prefs.briefing_time, step=900)
+
     saved = st.form_submit_button("Save settings", type="primary")
 
 if saved:
@@ -45,6 +60,12 @@ if saved:
         buffer_minutes=int(buffer),
         planning_days=int(days),
         suggest_low_priority=low,
+        gym_days=gym_days,
+        gym_minutes=int(gym_minutes),
+        gym_earliest=gym_earliest,
+        gym_latest=gym_latest,
+        briefing_on=briefing_on,
+        briefing_time=briefing_time,
     )
     problems = new_prefs.validate()
     if problems:

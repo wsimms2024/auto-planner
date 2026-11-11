@@ -120,8 +120,8 @@ def load_blocks(start: date, end: date, suggestions: list | None = None) -> list
         for e in scheduler.expand_events(db.list_events(), start, end)
     ]
     names = task_names()
-    for s in accepted_sessions():
-        if start <= s.start.date() <= end:
+    for s in db.list_active_sessions():
+        if s.status in ("accepted", "completed") and start <= s.start.date() <= end:
             blocks.append(Block(f"Study: {names.get(s.task_id, 'task')}", s.start, s.end, "study"))
     for s in suggestions or []:
         if start <= s.start.date() <= end:

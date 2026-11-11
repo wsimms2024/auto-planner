@@ -145,6 +145,14 @@ class Preferences:
     planning_days: int = 7
     # Suggest study sessions for Low priority tasks too
     suggest_low_priority: bool = False
+    # Gym: weekdays (Mon=0), length, and the earliest start / latest end
+    gym_days: list[int] = field(default_factory=lambda: [0, 2, 4])
+    gym_minutes: int = 90
+    gym_earliest: time = time(7)
+    gym_latest: time = time(21)
+    # Morning text on Telegram
+    briefing_on: bool = True
+    briefing_time: time = time(8)
 
     def validate(self) -> list[str]:
         problems = []
@@ -159,4 +167,8 @@ class Preferences:
             problems.append("Buffer can't be negative.")
         if not 1 <= self.planning_days <= 28:
             problems.append("Plan ahead must be between 1 and 28 days.")
+        if self.gym_latest <= self.gym_earliest:
+            problems.append("Gym: latest time must be after the earliest.")
+        if not 15 <= self.gym_minutes <= 300:
+            problems.append("Gym session must be between 15 and 300 minutes.")
         return problems

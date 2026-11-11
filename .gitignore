@@ -5,6 +5,9 @@ venv/
 # Local database (your personal data, never commit it)
 data/
 
+# API keys and bot tokens (see .env.example)
+.env
+
 # Google OAuth client file (the sign-in token lives in data/)
 credentials.json
 

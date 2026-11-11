@@ -62,6 +62,23 @@ estimate guessed from the name (`autoplan/task_rules.py`); your edits survive re
 
 Tweak sync timing and how far back email is scanned in `autoplan/config.py`.
 
+## Text your planner on Telegram
+
+1. Copy `.env.example` to `.env` and add your Claude API key and a bot token
+   from Telegram's @BotFather.
+2. Run `python telegram_bot.py`, open your bot in Telegram, and send `/start`.
+   It replies with your chat id; put it in `.env` as `TELEGRAM_CHAT_ID` and
+   restart the bot. It ignores everyone else.
+3. Ask things like "when should I go to the gym today?" or "anything due for
+   ISTM 4205 tomorrow, and when should I start?"
+
+The bot also sends a morning briefing, asks after each study session whether
+you did it (missed ones get rescheduled), and keeps Google and Blackboard
+synced. Gym days and the briefing time are on the Settings page.
+
+`start_autoplan.bat` starts the app and the bot together. Put a shortcut to it
+in `shell:startup` on an always-on computer.
+
 ## Run the tests
 
 ```powershell
@@ -80,6 +97,10 @@ pytest
 | `autoplan/week_view.py` | Builds the weekly grid and its colors | Change colors, slot size, layout |
 | `autoplan/ui.py` | Shared page helpers (formatting, week picker) | Change how dates and times display |
 | `autoplan/integrations/` | Google Calendar, Gmail, Blackboard sync | Change what gets imported or how emails are filtered |
+| `autoplan/planner_tools.py` | What the Telegram assistant can look up or change | Give the bot new abilities |
+| `autoplan/assistant.py` | The Claude conversation behind the bot | Change its tone or rules |
+| `autoplan/briefing.py` | Morning text and study follow-ups | Change what the morning text says |
+| `telegram_bot.py` | The Telegram bot itself | Add commands |
 | `autoplan/config.py` | DB path, categories, default preferences | Change defaults for a new database |
 | `tests/` | pytest tests | Add scenarios |
 

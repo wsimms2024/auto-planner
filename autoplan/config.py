@@ -11,6 +11,23 @@ from pathlib import Path
 # Project root is the folder that contains app.py
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+
+def _load_env_file(path: Path) -> None:
+    """Read KEY=value lines from .env into the environment (without overriding real env vars)."""
+    import os
+
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_env_file(PROJECT_ROOT / ".env")
+
 # SQLite file location (the data/ folder is gitignored)
 DB_PATH = PROJECT_ROOT / "data" / "autoplan.db"
 
@@ -27,7 +44,8 @@ PRIORITIES = ["High", "Medium", "Low"]
 TASK_STATUSES = ["open", "done"]
 
 # Study session statuses
-SESSION_STATUSES = ["suggested", "accepted", "rejected"]
+# completed / missed are set when you answer the bot's "did you do it?" follow-up
+SESSION_STATUSES = ["suggested", "accepted", "rejected", "completed", "missed"]
 
 # Defaults written to the preferences table the first time the app runs.
 # Working hours are per weekday so you can change any single day later.
@@ -38,7 +56,18 @@ DEFAULT_PREFERENCES = {
     "buffer_minutes": 15,
     "planning_days": 7,
     "suggest_low_priority": False,
+    # Gym: which days, how long, and the window it can go in
+    "gym_days": [0, 2, 4],
+    "gym_minutes": 90,
+    "gym_earliest": "07:00",
+    "gym_latest": "21:00",
+    # Morning text on Telegram
+    "briefing_on": True,
+    "briefing_time": "08:00",
 }
+
+# Claude model used by the Telegram planner. Haiku is cheaper, Sonnet reasons better.
+CLAUDE_MODEL = "claude-sonnet-5-5"
 
 # ---------- Integrations ----------
 

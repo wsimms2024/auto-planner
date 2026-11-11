@@ -10,7 +10,7 @@ normal reads, so nothing is lost by accident.
 
 import json
 import sqlite3
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -85,6 +85,7 @@ MIGRATIONS = [
     ("tasks", "external_id", "TEXT"),
     ("study_sessions", "google_event_id", "TEXT"),
     ("tasks", "plan_sessions", "INTEGER NOT NULL DEFAULT 1"),
+    ("study_sessions", "followup_sent", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 INDEXES = """
@@ -246,6 +247,12 @@ def get_preferences(db_path: Optional[Path] = None) -> Preferences:
         buffer_minutes=int(merged["buffer_minutes"]),
         planning_days=int(merged["planning_days"]),
         suggest_low_priority=bool(merged["suggest_low_priority"]),
+        gym_days=[int(d) for d in merged["gym_days"]],
+        gym_minutes=int(merged["gym_minutes"]),
+        gym_earliest=time.fromisoformat(merged["gym_earliest"]),
+        gym_latest=time.fromisoformat(merged["gym_latest"]),
+        briefing_on=bool(merged["briefing_on"]),
+        briefing_time=time.fromisoformat(merged["briefing_time"]),
     )
 
 
@@ -263,6 +270,12 @@ def save_preferences(prefs: Preferences, db_path: Optional[Path] = None) -> None
     set_preference("buffer_minutes", prefs.buffer_minutes, db_path)
     set_preference("planning_days", prefs.planning_days, db_path)
     set_preference("suggest_low_priority", prefs.suggest_low_priority, db_path)
+    set_preference("gym_days", sorted(prefs.gym_days), db_path)
+    set_preference("gym_minutes", prefs.gym_minutes, db_path)
+    set_preference("gym_earliest", prefs.gym_earliest.strftime("%H:%M"), db_path)
+    set_preference("gym_latest", prefs.gym_latest.strftime("%H:%M"), db_path)
+    set_preference("briefing_on", prefs.briefing_on, db_path)
+    set_preference("briefing_time", prefs.briefing_time.strftime("%H:%M"), db_path)
 
 
 # ---------- Event writes ----------
@@ -412,9 +425,32 @@ def set_session_status(session_id: int, status: str, db_path: Optional[Path] = N
         conn.execute("UPDATE study_sessions SET status = ? WHERE id = ?", (status, session_id))
 
 
+def sessions_needing_followup(now: datetime, db_path: Optional[Path] = None) -> list[StudySession]:
+    """Accepted sessions that ended 10+ minutes ago (within the last day) and haven't been asked about."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT s.* FROM study_sessions s JOIN tasks t ON t.id = s.task_id "
+            "WHERE s.status = 'accepted' AND s.followup_sent = 0 AND t.deleted_at IS NULL AND t.status = 'open' "
+            'AND s."end" <= ? AND s."end" >= ? ORDER BY s.start',
+            ((now - timedelta(minutes=10)).isoformat(), (now - timedelta(days=1)).isoformat()),
+        ).fetchall()
+        return [_row_to_session(r) for r in rows]
+
+
+def mark_followup_sent(session_id: int, db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE study_sessions SET followup_sent = 1 WHERE id = ?", (session_id,))
+
+
+def get_study_session(session_id: int, db_path: Optional[Path] = None) -> Optional[StudySession]:
+    with get_connection(db_path) as conn:
+        row = conn.execute("SELECT * FROM study_sessions WHERE id = ?", (session_id,)).fetchone()
+        return _row_to_session(row) if row else None
+
+
 def list_active_sessions(now: Optional[datetime] = None, db_path: Optional[Path] = None) -> list[StudySession]:
     """
-    Accepted and rejected sessions the scheduler should know about.
+    Sessions the scheduler should know about (accepted, completed, rejected, missed).
     Sessions for deleted tasks are left out, and so are future sessions
     for tasks you've already marked done (no point studying for those).
     """
@@ -423,7 +459,7 @@ def list_active_sessions(now: Optional[datetime] = None, db_path: Optional[Path]
         rows = conn.execute(
             "SELECT s.*, t.status AS task_status FROM study_sessions s "
             "JOIN tasks t ON t.id = s.task_id "
-            "WHERE t.deleted_at IS NULL AND s.status IN ('accepted', 'rejected') ORDER BY s.start"
+            "WHERE t.deleted_at IS NULL AND s.status IN ('accepted', 'rejected', 'completed', 'missed') ORDER BY s.start"
         ).fetchall()
     sessions = []
     for r in rows:

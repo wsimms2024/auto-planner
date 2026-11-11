@@ -5,3 +5,5 @@ google-api-python-client>=2.100
 google-auth-oauthlib>=1.2
 icalendar>=5.0
 tzdata
+anthropic>=0.40
+python-telegram-bot[job-queue]>=21.0

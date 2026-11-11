@@ -188,8 +188,11 @@ def find_free_slots(
 # ---------- Prioritizing ----------
 
 def remaining_minutes(task: Task, sessions: list[StudySession]) -> int:
-    """Estimated time minus time already in accepted sessions for this task."""
-    planned = sum(_minutes(s.start, s.end) for s in sessions if s.task_id == task.id and s.status == "accepted")
+    """Estimated time minus time in accepted or completed sessions for this task."""
+    planned = sum(
+        _minutes(s.start, s.end) for s in sessions
+        if s.task_id == task.id and s.status in ("accepted", "completed")
+    )
     return max(task.estimated_minutes - planned, 0)
 
 
@@ -247,7 +250,7 @@ def suggest_sessions(
             continue
 
         limit = task.deadline if task.deadline > now else horizon_end
-        rejected = [(s.start, s.end) for s in existing_sessions if s.task_id == task.id and s.status == "rejected"]
+        rejected = [(s.start, s.end) for s in existing_sessions if s.task_id == task.id and s.status in ("rejected", "missed")]
         days_used = {s.start.date() for s in accepted if s.task_id == task.id}
 
         while remaining > 0:
