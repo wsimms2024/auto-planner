@@ -173,6 +173,8 @@ MIGRATIONS = [
     ("tasks", "plan_sessions", "INTEGER NOT NULL DEFAULT 1"),
     ("study_sessions", "followup_sent", "INTEGER NOT NULL DEFAULT 0"),
     ("events", "skip_dates", "TEXT"),
+    ("events", "google_event_id", "TEXT"),   # copy on the Google "AutoPlan" calendar
+    ("events", "google_hash", "TEXT"),       # what was last sent, to spot edits
 ]
 
 INDEXES = """
@@ -418,6 +420,18 @@ def get_event(event_id: int, db_path: Optional[Path] = None) -> Optional[Event]:
     with get_connection(db_path) as conn:
         row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         return _row_to_event(row) if row else None
+
+
+def list_events_to_mirror(db_path: Optional[Path] = None) -> list[tuple[Event, Optional[str], Optional[str]]]:
+    """Events made in AutoPlan (by you or the bot), deleted ones included, with their Google copy info."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute("SELECT * FROM events WHERE source = 'manual'").fetchall()
+        return [(_row_to_event(r), r["google_event_id"], r["google_hash"]) for r in rows]
+
+
+def set_event_google(event_id: int, google_event_id: Optional[str], google_hash: Optional[str], db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE events SET google_event_id = ?, google_hash = ? WHERE id = ?", (google_event_id, google_hash, event_id))
 
 
 def skip_event_day(event_id: int, day: date, db_path: Optional[Path] = None) -> None:

@@ -44,9 +44,25 @@ def sync_google_calendar(now: datetime | None = None, interactive: bool = False)
         else:
             parts.append("no calendars chosen to import")
         parts.append(google_calendar.push_sessions(service, now))
+        parts.append(google_calendar.push_events(service, now))
         return "; ".join(parts)
 
     return _run("google", work)
+
+
+def push_to_google(now: datetime | None = None) -> None:
+    """Right after a change in AutoPlan, copy it to Google so it shows on your phone. Silent if not signed in."""
+    if not google_auth.is_signed_in():
+        return
+    from autoplan.integrations import google_calendar
+
+    now = now or datetime.now()
+    try:
+        service = google_auth.calendar_service()
+        google_calendar.push_events(service, now)
+        google_calendar.push_sessions(service, now)
+    except Exception:
+        pass  # the regular sync will retry
 
 
 def sync_gmail(now: datetime | None = None, interactive: bool = False) -> tuple[bool, str]:

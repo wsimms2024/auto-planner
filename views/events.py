@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timedelta
 import streamlit as st
 
 from autoplan import config, db, scheduler, ui
+from autoplan.integrations import sync
 from autoplan.models import Event
 
 
@@ -93,6 +94,7 @@ def event_form(key: str, existing: Event | None = None) -> None:
         db.add_event(event)
         st.session_state[f"{key}_version"] = version + 1
         ui.flash(f"Added **{event.name}**.")
+    sync.push_to_google()  # show it on Google Calendar / your phone
     st.rerun()
 
 
@@ -123,6 +125,7 @@ with edit_tab:
         if st.button("Delete this event", key=f"del_{chosen.id}"):
             db.delete_event(chosen.id)
             ui.flash(f"Deleted **{chosen.name}**. You can restore it from the Deleted tab.")
+            sync.push_to_google()  # show it on Google Calendar / your phone
             st.rerun()
 
 with deleted_tab:
@@ -135,4 +138,5 @@ with deleted_tab:
         if c2.button("Restore", key=f"restore_{e.id}"):
             db.restore_event(e.id)
             ui.flash(f"Restored **{e.name}**.")
+            sync.push_to_google()  # show it on Google Calendar / your phone
             st.rerun()

@@ -616,13 +616,22 @@ FUNCTIONS = {
 }
 
 
+# Changes that should show up on Google Calendar (and your phone) right away
+CALENDAR_WRITES = {"add_event", "edit_event", "delete_event", "schedule_study_session", "cancel_study_session"}
+
+
 def run_tool(name: str, args: dict) -> dict:
     """Run one tool by name. Errors come back as {'error': ...} so Claude can explain or retry."""
     fn = FUNCTIONS.get(name)
     if fn is None:
         return {"error": f"Unknown tool {name}"}
     try:
-        return fn(**(args or {}))
+        result = fn(**(args or {}))
+        if name in CALENDAR_WRITES and isinstance(result, dict) and not result.get("error"):
+            from autoplan.integrations import sync
+
+            sync.push_to_google()
+        return result
     except (ValueError, TypeError) as e:
         return {"error": f"Bad input: {e}"}
     except Exception as e:  # e.g. Google rejected the change

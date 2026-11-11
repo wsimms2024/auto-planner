@@ -50,8 +50,11 @@ open the app if the last sync was more than 30 minutes ago.
    to import.
 
 - Imported calendar events are read-only here. Edit them in Google.
-- Accepted study sessions are copied to a separate **AutoPlan** calendar
-  with a 10-minute reminder, so your phone alerts you.
+- Accepted study sessions, and any events you or the bot add in AutoPlan,
+  are copied to a separate **AutoPlan** calendar (study sessions get a
+  10-minute reminder). Edits and deletes follow. To see them in the iPhone
+  Calendar app, add your Google account on the phone and turn on the
+  AutoPlan calendar at calendar.google.com/calendar/syncselect.
 - Gmail access is read-only. Blackboard notifications, professor emails and
   anything with a clear deadline land on a review list; nothing becomes a
   task until you approve it.

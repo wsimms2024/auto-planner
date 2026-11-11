@@ -11,7 +11,8 @@ Skipped on import: all-day events, events marked "free", events you
 declined, and anything on the AutoPlan calendar itself.
 """
 
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from autoplan import config, db
@@ -158,6 +159,74 @@ def delete_google_event(service, external_id: str) -> None:
     """Delete one event in Google. For a repeating event this removes only that occurrence."""
     cal_id, event_id = _split_id(external_id)
     service.events().delete(calendarId=cal_id, eventId=event_id).execute()
+
+
+# ---------- Mirror AutoPlan events to Google (so they show on your phone) ----------
+
+COLORS = {"class": "9", "work": "6", "gym": "2", "personal": "3", "other": "8"}  # Google's color ids
+
+
+def event_body(event: Event) -> dict:
+    body = {
+        "summary": event.name,
+        "description": "Added in AutoPlan",
+        "start": {"dateTime": to_google(event.start), "timeZone": config.TIMEZONE},
+        "end": {"dateTime": to_google(event.end), "timeZone": config.TIMEZONE},
+        "colorId": COLORS.get(event.category, "8"),
+    }
+    if event.recurrence_days:
+        byday = ",".join(["MO", "TU", "WE", "TH", "FR", "SA", "SU"][d] for d in sorted(event.recurrence_days))
+        until_utc = datetime.combine(event.recurrence_until, time(23, 59, 59)).replace(
+            tzinfo=ZoneInfo(config.TIMEZONE)).astimezone(ZoneInfo("UTC"))
+        rules = [f"RRULE:FREQ=WEEKLY;BYDAY={byday};UNTIL={until_utc:%Y%m%dT%H%M%SZ}"]
+        if event.skip_dates:
+            stamps = ",".join(datetime.combine(d, event.start.time()).strftime("%Y%m%dT%H%M%S") for d in sorted(event.skip_dates))
+            rules.append(f"EXDATE;TZID={config.TIMEZONE}:{stamps}")
+        body["recurrence"] = rules
+    return body
+
+
+def _hash(body: dict) -> str:
+    import hashlib
+
+    return hashlib.sha1(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+
+def push_events(service, now: datetime) -> str:
+    """Add, update or remove copies of AutoPlan's own events on the AutoPlan calendar."""
+    items = db.list_events_to_mirror()
+    if not any(gid or not e.deleted_at for e, gid, _ in items):
+        return "no AutoPlan events to mirror"
+    cal_id = ensure_autoplan_calendar(service)
+    added = updated = removed = 0
+    for event, gid, old_hash in items:
+        last_day = event.recurrence_until if event.recurrence_days else event.end.date()
+        stale = last_day < (now - timedelta(days=7)).date()
+        if event.deleted_at or stale:
+            if gid and not stale:
+                try:
+                    service.events().delete(calendarId=cal_id, eventId=gid).execute()
+                except Exception:
+                    pass  # already gone in Google
+                db.set_event_google(event.id, None, None)
+                removed += 1
+            continue
+        body = event_body(event)
+        h = _hash(body)
+        if gid and h == old_hash:
+            continue
+        if gid:
+            try:
+                service.events().update(calendarId=cal_id, eventId=gid, body=body).execute()
+                updated += 1
+                db.set_event_google(event.id, gid, h)
+                continue
+            except Exception:
+                pass  # deleted in Google: make a fresh copy
+        created = service.events().insert(calendarId=cal_id, body=body).execute()
+        db.set_event_google(event.id, created["id"], h)
+        added += 1
+    return f"events mirrored: {added} added, {updated} updated, {removed} removed"
 
 
 # ---------- Push study sessions ----------

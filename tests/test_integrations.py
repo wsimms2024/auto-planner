@@ -417,3 +417,61 @@ def test_office_senders_count_as_mass_mail():
 def test_muted_senders_are_skipped():
     db.set_preference("gmail_muted_senders", ["psmith@gwu.edu"])
     assert gmail.classify("Prof Smith <psmith@gwu.edu>", "Exam room change", "The exam is now in Room 101.", None) is None
+
+
+# ---------- Mirroring AutoPlan's own events to Google ----------
+
+class FakeEventsWithUpdate(FakeEvents):
+    def __init__(self, items_by_cal):
+        super().__init__(items_by_cal)
+        self.updated = []
+
+    def update(self, calendarId, eventId, body):
+        self.updated.append((eventId, body))
+        return Call({"id": eventId})
+
+
+def mirror_service():
+    s = FakeCalendarService()
+    s._events = FakeEventsWithUpdate({})
+    return s
+
+
+def test_events_added_in_autoplan_are_mirrored_and_kept_in_step():
+    from datetime import date as d
+    from autoplan.models import Event
+
+    now = datetime(2026, 11, 11, 9)
+    s = mirror_service()
+    gym = db.add_event(Event(name="Legs", start=datetime(2026, 11, 11, 13, 45), end=datetime(2026, 11, 11, 15), category="gym"))
+    cls = db.add_event(Event(name="ISTM 4205", start=datetime(2026, 11, 2, 15, 45), end=datetime(2026, 11, 2, 17), category="class",
+                             recurrence_days=[0, 2], recurrence_until=d(2026, 12, 9)))
+    db.upsert_external_event(Event(name="From Google", start=datetime(2026, 11, 12, 9), end=datetime(2026, 11, 12, 10),
+                                   source="google", external_id="cal:x"))  # already in Google: not copied
+    google_calendar.push_events(s, now)
+    bodies = {b["summary"]: b for _, b in s.events().inserted}
+    assert set(bodies) == {"Legs", "ISTM 4205"}
+    assert bodies["Legs"]["start"]["dateTime"] == "2026-11-11T13:45:00-05:00" and bodies["Legs"]["colorId"] == "2"
+    assert bodies["ISTM 4205"]["recurrence"] == ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=20261210T045959Z"]
+
+    google_calendar.push_events(s, now)  # nothing changed: nothing sent
+    assert len(s.events().inserted) == 2 and s.events().updated == []
+
+    db.skip_event_day(cls, d(2026, 11, 11))  # cancel this Wednesday
+    google_calendar.push_events(s, now)
+    _, body = s.events().updated[-1]
+    assert body["recurrence"][1] == "EXDATE;TZID=America/New_York:20261111T154500"
+
+    db.delete_event(gym)
+    google_calendar.push_events(s, now)
+    assert len(s.events().deleted) == 1
+
+
+def test_bot_changes_push_right_away(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sync, "push_to_google", lambda now=None: calls.append(1))
+    from autoplan import planner_tools
+
+    planner_tools.run_tool("add_event", {"name": "Legs", "start": "2026-11-11 13:45", "end": "2026-11-11 15:00", "category": "gym"})
+    planner_tools.run_tool("get_schedule", {"day": "2026-11-11"})  # reads don't push
+    assert calls == [1]
