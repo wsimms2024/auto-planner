@@ -72,10 +72,34 @@ def sync_all(now: datetime | None = None) -> list[tuple[str, bool, str]]:
         results.append(("Gmail", *sync_gmail(now)))
     if db.get_preference_value("blackboard_feed_url"):
         results.append(("Blackboard", *sync_blackboard(now)))
+    if blackboard_details_due(now):
+        results.append(("Blackboard details", *sync_blackboard_details(now)))
     from autoplan import exam_mode
 
     exam_mode.sync_exam_tasks(now)  # exams that just came in from the calendar get study tasks
     return results
+
+
+def blackboard_details_due(now: datetime | None = None) -> bool:
+    """The scraper runs every BLACKBOARD_SCRAPE_HOURS (it's slower), once you've connected Blackboard."""
+    from autoplan.integrations import bb_scraper
+
+    if not bb_scraper.has_login():
+        return False
+    last_run, _ = db.get_sync_state("blackboard_details")
+    now = now or datetime.now()
+    return last_run is None or now - last_run > timedelta(hours=config.BLACKBOARD_SCRAPE_HOURS)
+
+
+def sync_blackboard_details(now: datetime | None = None) -> tuple[bool, str]:
+    from autoplan.integrations import bb_scraper
+
+    return _run("blackboard_details", lambda: bb_scraper.sync(now or datetime.now()))
+
+
+def blackboard_needs_login() -> bool:
+    _, message = db.get_sync_state("blackboard_details")
+    return "NeedsLogin" in message
 
 
 def due_for_auto_sync(now: datetime | None = None) -> bool:

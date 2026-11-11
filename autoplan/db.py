@@ -69,6 +69,46 @@ CREATE TABLE IF NOT EXISTS gmail_seen (
     message_id TEXT PRIMARY KEY          -- emails already checked, so scans never redo them
 );
 
+CREATE TABLE IF NOT EXISTS bb_courses (
+    id            TEXT PRIMARY KEY,      -- Blackboard's internal course id
+    code          TEXT NOT NULL,         -- e.g. ISTM 4205
+    name          TEXT NOT NULL,
+    term          TEXT NOT NULL DEFAULT '',
+    url           TEXT NOT NULL DEFAULT '',
+    grade_display TEXT,                  -- overall grade as Blackboard shows it, if any
+    updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bb_assignments (
+    id           TEXT PRIMARY KEY,       -- Blackboard content id
+    course_id    TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    due          TEXT,
+    instructions TEXT NOT NULL DEFAULT '',
+    attachments  TEXT NOT NULL DEFAULT '[]',  -- JSON list of {name, path}
+    points       REAL,
+    url          TEXT NOT NULL DEFAULT '',
+    task_id      INTEGER,                -- matching AutoPlan task, if found
+    updated_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bb_grade_items (
+    id        TEXT PRIMARY KEY,          -- gradebook column id
+    course_id TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    possible  REAL,
+    score     REAL,                      -- your score, NULL if not graded yet
+    display   TEXT,                      -- e.g. "A-" or "18/20"
+    due       TEXT,
+    is_total  INTEGER NOT NULL DEFAULT 0 -- Blackboard's overall/total column
+);
+
+CREATE TABLE IF NOT EXISTS prep_notes (
+    task_id    INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    content    TEXT NOT NULL             -- JSON from the Prep button
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
     source   TEXT PRIMARY KEY,           -- google, gmail, blackboard
     last_run TEXT NOT NULL,
@@ -629,6 +669,86 @@ def filter_unseen_emails(message_ids: list[str], db_path: Optional[Path] = None)
 def mark_email_seen(message_id: str, db_path: Optional[Path] = None) -> None:
     with get_connection(db_path) as conn:
         conn.execute("INSERT OR IGNORE INTO gmail_seen (message_id) VALUES (?)", (message_id,))
+
+
+# ---------- Blackboard details and grades ----------
+
+def save_bb_courses(courses, now: datetime, db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        for c in courses:
+            conn.execute(
+                "INSERT INTO bb_courses (id, code, name, term, url, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET code = excluded.code, name = excluded.name, term = excluded.term, "
+                "url = excluded.url, updated_at = excluded.updated_at",
+                (c.id, c.code, c.name, c.term, c.url, now.isoformat()),
+            )
+
+
+def save_bb_assignment(a, task_id: Optional[int], now: datetime, db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        old = conn.execute("SELECT attachments FROM bb_assignments WHERE id = ?", (a.id,)).fetchone()
+        attachments = a.attachments or (json.loads(old["attachments"]) if old else [])
+        conn.execute(
+            "INSERT INTO bb_assignments (id, course_id, title, due, instructions, attachments, points, url, task_id, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET course_id = excluded.course_id, "
+            "title = excluded.title, due = excluded.due, instructions = excluded.instructions, "
+            "attachments = excluded.attachments, points = excluded.points, url = excluded.url, "
+            "task_id = COALESCE(excluded.task_id, bb_assignments.task_id), updated_at = excluded.updated_at",
+            (a.id, a.course_id, a.title, a.due.isoformat() if a.due else None, a.instructions,
+             json.dumps(attachments), a.points, a.url, task_id, now.isoformat()),
+        )
+
+
+def replace_bb_grades(course_ids: list[str], rows: list[dict], db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        for cid in course_ids:
+            conn.execute("DELETE FROM bb_grade_items WHERE course_id = ?", (cid,))
+        for r in rows:
+            conn.execute(
+                "INSERT OR REPLACE INTO bb_grade_items (id, course_id, name, possible, score, display, due, is_total) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (r["id"], r["course_id"], r["name"], r["possible"], r["score"], r["display"],
+                 r["due"].isoformat() if r["due"] else None, int(r["is_total"])),
+            )
+
+
+def list_bb_courses(db_path: Optional[Path] = None) -> list[dict]:
+    with get_connection(db_path) as conn:
+        latest = conn.execute("SELECT MAX(term) FROM bb_courses").fetchone()[0] or ""
+        rows = conn.execute("SELECT * FROM bb_courses WHERE term = ? ORDER BY code", (latest,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_bb_grades(course_id: str, db_path: Optional[Path] = None) -> list[dict]:
+    with get_connection(db_path) as conn:
+        rows = conn.execute("SELECT * FROM bb_grade_items WHERE course_id = ? ORDER BY due IS NULL, due, name", (course_id,)).fetchall()
+    return [{**dict(r), "due": _dt(r["due"]), "is_total": bool(r["is_total"])} for r in rows]
+
+
+def get_bb_assignment_for_task(task_id: int, db_path: Optional[Path] = None) -> Optional[dict]:
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT a.*, c.code AS course_code, c.name AS course_name FROM bb_assignments a "
+            "LEFT JOIN bb_courses c ON c.id = a.course_id WHERE a.task_id = ? ORDER BY a.updated_at DESC",
+            (task_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {**dict(row), "due": _dt(row["due"]), "attachments": json.loads(row["attachments"])}
+
+
+def save_prep(task_id: int, content: dict, db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO prep_notes (task_id, created_at, content) VALUES (?, ?, ?)",
+            (task_id, datetime.now().isoformat(), json.dumps(content)),
+        )
+
+
+def get_prep(task_id: int, db_path: Optional[Path] = None) -> Optional[dict]:
+    with get_connection(db_path) as conn:
+        row = conn.execute("SELECT content, created_at FROM prep_notes WHERE task_id = ?", (task_id,)).fetchone()
+    return {**json.loads(row["content"]), "_created_at": row["created_at"]} if row else None
 
 
 # ---------- Sync bookkeeping ----------

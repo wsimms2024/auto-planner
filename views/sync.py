@@ -152,6 +152,56 @@ with bb_tab:
             show_result("Blackboard", *sync.sync_blackboard())
         st.rerun()
 
+    st.divider()
+    st.subheader("Assignment details and grades")
+    st.caption("Reads instructions, files and your gradebook from Blackboard. Sign in once; it refreshes every few hours.")
+    from autoplan.integrations import bb_scraper
+
+    if not bb_scraper.has_login():
+        if st.button("Connect Blackboard", type="primary", help="Opens a browser window on this computer to sign in with GW login and Duo"):
+            with st.spinner("A browser window opened. Sign in there (you have 5 minutes)..."):
+                try:
+                    ok = bb_scraper.login_interactive()
+                except Exception as e:
+                    ok = False
+                    hint = " Run `playwright install chromium` once in the project folder, then try again." if "Executable doesn't exist" in str(e) else ""
+                    ui.flash(f"Couldn't open the browser: {e}.{hint}", "error")
+                    st.rerun()
+            if ok:
+                with st.spinner("Signed in. Reading your courses..."):
+                    show_result("Blackboard details", *sync.sync_blackboard_details())
+            else:
+                ui.flash("Didn't see a finished sign-in. Try again.", "warning")
+            st.rerun()
+    else:
+        status_line("blackboard_details")
+        if sync.blackboard_needs_login():
+            st.warning("Your Blackboard login expired.")
+            if st.button("Sign in again"):
+                with st.spinner("A browser window opened. Sign in there..."):
+                    bb_scraper.login_interactive()
+                show_result("Blackboard details", *sync.sync_blackboard_details())
+                st.rerun()
+        c1, c2 = st.columns(2)
+        if c1.button("Read Blackboard now"):
+            with st.spinner("Reading courses, assignments and grades..."):
+                show_result("Blackboard details", *sync.sync_blackboard_details())
+            st.rerun()
+        if c2.button("Disconnect Blackboard"):
+            import shutil
+
+            shutil.rmtree(bb_scraper.PROFILE_DIR, ignore_errors=True)
+            ui.flash("Disconnected. Saved assignment details and grades stay until the next connect.")
+            st.rerun()
+        with st.expander("Troubleshooting"):
+            st.caption("Saves Blackboard's raw responses to a file in data/bb_debug so the reader can be adjusted to GW's setup.")
+            if st.button("Save sample data"):
+                try:
+                    ui.flash(f"Saved to {bb_scraper.probe()}")
+                except Exception as e:
+                    ui.flash(f"{type(e).__name__}: {e}", "error")
+                st.rerun()
+
 # ---------- Email review ----------
 
 def add_from_email(item, name, due, minutes, priority) -> None:

@@ -29,6 +29,7 @@ How to answer:
 - For weekly events, change or cancel just the one day unless he says every week.
 - Deleting is fine when he clearly asks ("cancel", "delete", "remove"). If it's unclear, confirm first.
 - If a task name is ambiguous, ask which one.
+- For homework help, plan and explain (requirements, materials, steps, concepts). Don't write the work he'd submit.
 """
 
 

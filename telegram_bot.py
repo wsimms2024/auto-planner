@@ -153,6 +153,14 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         for name, ok, message in results:
             log.info("sync %s: %s", name, message)
 
+    # Blackboard login expired: say so once
+    if sync.blackboard_needs_login():
+        failed_at, _ = db.get_sync_state("blackboard_details")
+        told_at, _ = db.get_sync_state("bb_login_notice")
+        if told_at is None or told_at < failed_at:
+            await context.bot.send_message(CHAT_ID, "Your Blackboard login expired. Open AutoPlan → Sync → Blackboard and click Connect Blackboard.")
+            db.set_sync_state("bb_login_notice", "sent")
+
     # Morning briefing, once a day
     prefs = db.get_preferences()
     briefing_at = datetime.combine(now.date(), prefs.briefing_time)

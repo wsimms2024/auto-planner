@@ -18,6 +18,7 @@ page = st.navigation(
         st.Page("views/dashboard.py", title="Dashboard", icon="🏠", default=True),
         st.Page("views/events.py", title="Events", icon="🗓️"),
         st.Page("views/tasks.py", title="Tasks", icon="✅"),
+        st.Page("views/grades.py", title="Grades", icon="📊"),
         st.Page("views/sync.py", title="Sync", icon="🔄"),
         st.Page("views/settings.py", title="Settings", icon="⚙️"),
     ]

@@ -7,3 +7,6 @@ icalendar>=5.0
 tzdata
 anthropic>=0.40
 python-telegram-bot[job-queue]>=21.0
+playwright>=1.45
+pypdf>=4.0
+python-docx>=1.1

@@ -1,6 +1,7 @@
 """Tasks page: assignments and anything with a deadline."""
 
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -114,7 +115,61 @@ overdue = [t for t in open_tasks if t.is_overdue(now)]
 upcoming = [t for t in open_tasks if not t.is_overdue(now)]
 done = [t for t in tasks if t.status == "done"]
 
-list_tab, add_tab, edit_tab, deleted_tab = st.tabs(["Tasks", "Add task", "Edit or delete", "Deleted"])
+list_tab, details_tab, add_tab, edit_tab, deleted_tab = st.tabs(["Tasks", "Details and prep", "Add task", "Edit or delete", "Deleted"])
+
+with details_tab:
+    open_tasks = [t for t in tasks if t.status == "open"]
+    if not open_tasks:
+        st.write("No open tasks.")
+    else:
+        chosen = st.selectbox("Task", open_tasks, format_func=lambda t: f"{t.name} · due {ui.fmt_dt(t.deadline)}", key="details_pick")
+        details = db.get_bb_assignment_for_task(chosen.id)
+        if details:
+            meta = [details.get("course_code") or "", f"{details['points']:g} points" if details.get("points") else ""]
+            st.caption("  ".join(m for m in meta if m) + f"  [open in Blackboard]({details['url']})")
+            with st.expander("Instructions", expanded=not details.get("attachments")):
+                st.write(details.get("instructions") or "No instructions posted.")
+            for f in details.get("attachments", []):
+                path = Path(f["path"])
+                if path.exists():
+                    st.download_button(f"📎 {f['name']}", path.read_bytes(), file_name=f["name"], key=f"dl_{chosen.id}_{f['name']}")
+        else:
+            st.caption("No Blackboard details for this task yet. Connect Blackboard on the Sync page, or Prep from the title alone.")
+
+        plan = db.get_prep(chosen.id)
+        label = "Prep again" if plan else "Prep this assignment"
+        if st.button(label, type="secondary" if plan else "primary", help="Claude reads the instructions and files and plans the work. It doesn't do the assignment."):
+            with st.spinner("Reading the assignment..."):
+                try:
+                    from autoplan import prep
+
+                    plan = prep.run(chosen.id)
+                except Exception as e:
+                    st.error(f"Prep didn't work: {type(e).__name__}: {e}")
+        if plan:
+            st.markdown(f"**{plan.get('summary', '')}**")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Requirements**")
+                st.markdown("\n".join(f"- {r}" for r in plan.get("requirements", [])) or "-")
+                if plan.get("materials"):
+                    st.markdown("**You'll need**")
+                    st.markdown("\n".join(f"- {m}" for m in plan["materials"]))
+            with c2:
+                st.markdown(f"**Steps** · about {ui.fmt_minutes(plan.get('estimated_minutes', 0))}")
+                st.markdown("\n".join(f"{i}. {s['step']} :gray[{ui.fmt_minutes(s['minutes'])}]" for i, s in enumerate(plan.get("steps", []), 1)))
+                if plan.get("concepts"):
+                    st.markdown("**Review first**")
+                    st.markdown("\n".join(f"- {c}" for c in plan["concepts"]))
+            if plan.get("questions"):
+                st.markdown("**Ask the professor**")
+                st.markdown("\n".join(f"- {q}" for q in plan["questions"]))
+            est = plan.get("estimated_minutes") or 0
+            if est and est != chosen.estimated_minutes and st.button(f"Use {ui.fmt_minutes(est)} as the estimate (now {ui.fmt_minutes(chosen.estimated_minutes)})"):
+                chosen.estimated_minutes = int(est)
+                db.update_task(chosen)
+                ui.flash(f"Estimate for {chosen.name} set to {ui.fmt_minutes(est)}.")
+                st.rerun()
 
 with list_tab:
     if overdue:

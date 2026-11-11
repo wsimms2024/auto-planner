@@ -381,6 +381,76 @@ def cancel_study_session(task_name: str, date: str | None = None) -> dict:
             "note": "It's also removed from Google Calendar on the next sync."}
 
 
+# ---------- Blackboard details, prep and grades ----------
+
+def get_assignment_details(task_name: str) -> dict:
+    """Instructions, files and points from Blackboard, plus the saved prep plan if there is one."""
+    task = find_task(task_name, include_done=True)
+    if not task:
+        return {"error": f"No task matching '{task_name}'."}
+    details = db.get_bb_assignment_for_task(task.id)
+    out = {"task": task.name, "due": _fmt(task.deadline)}
+    if details:
+        out.update({
+            "course": details.get("course_code"),
+            "points": details.get("points"),
+            "instructions": (details.get("instructions") or "")[:3000],
+            "files": [f["name"] for f in details.get("attachments", [])],
+        })
+    else:
+        out["note"] = "No Blackboard details for this task (not matched, or Blackboard isn't connected)."
+    plan = db.get_prep(task.id)
+    if plan:
+        out["prep_plan"] = {k: plan[k] for k in ("summary", "requirements", "materials", "steps", "estimated_minutes") if k in plan}
+    return out
+
+
+def prep_assignment(task_name: str) -> dict:
+    """Run the Prep button for a task (Claude reads instructions/files and plans the work)."""
+    from autoplan import prep
+
+    task = find_task(task_name)
+    if not task:
+        return {"error": f"No open task matching '{task_name}'."}
+    plan = prep.run(task.id)
+    return {"task": task.name, **{k: plan[k] for k in ("summary", "requirements", "materials", "steps", "estimated_minutes") if k in plan}}
+
+
+def get_grades(course: str | None = None) -> dict:
+    """Current standing per course from the Blackboard gradebook."""
+    from autoplan import grades
+
+    rows = []
+    for c in db.list_bb_courses():
+        if course and course.lower().replace(" ", "") not in (c["code"] + c["name"]).lower().replace(" ", ""):
+            continue
+        items = db.list_bb_grades(c["id"])
+        s = grades.summary(items)
+        recent = [i for i in items if not i["is_total"] and i["score"] is not None][-3:]
+        rows.append({
+            "course": c["code"], "name": c["name"], "percent": s["percent"], "letter": s["letter"],
+            "blackboard_total": s["blackboard_total"], "graded": s["graded_count"], "remaining": s["remaining_count"],
+            "recent": [f"{i['name']}: {i['display'] or i['score']}" for i in recent],
+        })
+    if not rows:
+        return {"courses": [], "note": "No grades saved. Blackboard may not be connected yet."}
+    return {"courses": rows, "note": "Points-based; weighted classes are estimates."}
+
+
+def grade_needed(course: str, target_letter: str = "B+") -> dict:
+    """What average he needs on the remaining work to finish a course with a target letter."""
+    from autoplan import grades
+
+    match = [c for c in db.list_bb_courses() if course.lower().replace(" ", "") in (c["code"] + c["name"]).lower().replace(" ", "")]
+    if not match:
+        return {"error": f"No course matching '{course}'."}
+    c = match[0]
+    if target_letter not in dict(grades.LETTER_CUTOFFS):
+        return {"error": f"Use a letter like {', '.join(l for l, _ in grades.LETTER_CUTOFFS[:6])}."}
+    need = grades.needed_for(db.list_bb_grades(c["id"]), grades.cutoff(target_letter))
+    return {"course": c["code"], "target": target_letter, **need}
+
+
 # ---------- Tool definitions for Claude ----------
 
 DAY = {"type": "string", "description": "'today', 'tomorrow', a weekday name, or YYYY-MM-DD"}
@@ -443,6 +513,15 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "task_name": {"type": "string"},
          "date": {"type": "string", "description": "YYYY-MM-DD"}}, "required": ["task_name"]}},
+    {"name": "get_assignment_details", "description": "Blackboard instructions, files and points for a task, plus its saved prep plan.",
+     "input_schema": {"type": "object", "properties": {"task_name": {"type": "string"}}, "required": ["task_name"]}},
+    {"name": "prep_assignment", "description": "Have Claude read an assignment's instructions and files and make a plan (requirements, materials, steps, time). Use when Will asks what he needs or how to approach an assignment. Never write the assignment for him.",
+     "input_schema": {"type": "object", "properties": {"task_name": {"type": "string"}}, "required": ["task_name"]}},
+    {"name": "get_grades", "description": "Current grade per course from Blackboard (optionally one course).",
+     "input_schema": {"type": "object", "properties": {"course": {"type": "string"}}}},
+    {"name": "grade_needed", "description": "What average Will needs on the remaining work to finish a course with a target letter grade.",
+     "input_schema": {"type": "object", "properties": {
+         "course": {"type": "string"}, "target_letter": {"type": "string", "description": "e.g. A, A-, B+"}}, "required": ["course"]}},
     {"name": "schedule_study_session", "description": "Put a study session for a task on the calendar. Only when Will agrees to a time.",
      "input_schema": {"type": "object", "properties": {
          "task_name": {"type": "string"},
@@ -465,6 +544,10 @@ FUNCTIONS = {
     "update_task": update_task,
     "delete_task": delete_task,
     "cancel_study_session": cancel_study_session,
+    "get_assignment_details": get_assignment_details,
+    "prep_assignment": prep_assignment,
+    "get_grades": get_grades,
+    "grade_needed": grade_needed,
 }
 
 

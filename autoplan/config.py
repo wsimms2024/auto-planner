@@ -96,3 +96,10 @@ GMAIL_MAX_MESSAGES = 100
 GMAIL_PAUSE_SECONDS = 0.25
 
 # Priority and time estimates for imported tasks are guessed in task_rules.py
+
+# Blackboard scraper: your school's Blackboard address, how often to re-read it,
+# how far ahead to download assignment files, and the biggest file to download
+BLACKBOARD_URL = "https://blackboard.gwu.edu"
+BLACKBOARD_SCRAPE_HOURS = 6
+BLACKBOARD_FILES_DAYS_AHEAD = 21
+BLACKBOARD_MAX_FILE_MB = 15
