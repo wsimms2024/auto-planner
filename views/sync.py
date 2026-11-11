@@ -58,7 +58,52 @@ if c2.button("Sync now", type="primary", width="stretch"):
         ui.flash("  \n".join(f"{name}: {msg}" for name, _, msg in results), "success" if all_ok else "warning")
     st.rerun()
 
-review_tab, google_tab, bb_tab = st.tabs([f"Email to review ({len(db.list_inbox())})", "Google", "Blackboard"])
+pending_exams = db.list_exam_candidates("pending")
+review_tab, exams_tab, google_tab, bb_tab = st.tabs([
+    f"Email to review ({len(db.list_inbox())})", f"Exam dates ({len(pending_exams)})", "Google", "Blackboard"])
+
+with exams_tab:
+    from autoplan import exam_finder
+
+    st.caption("Found in your syllabi, announcements and course pages. Confirm to put an exam on your calendar; "
+               "AutoPlan then spreads review sessions over the week before.")
+    if not pending_exams:
+        st.write("Nothing to confirm.")
+    for c in pending_exams:
+        with st.container(border=True):
+            when = datetime.fromisoformat(c["date"])
+            head = f"**{c['name']}** · {when:%a %b} {when.day}" + (f", {datetime.strptime(c['start_time'], '%H:%M'):%I:%M %p}".replace(" 0", " ") if c.get("start_time") else "")
+            if c.get("previous"):
+                head += f"  :orange[changed, was {c['previous']}]"
+            st.markdown(head)
+            st.caption(f"{c['confidence']} confidence · from the {c['source']}: \"{c['quote']}\"")
+            with st.form(f"exam_{c['id']}", border=False):
+                a, b, d = st.columns(3)
+                day = a.date_input("Date", value=when.date(), key=f"exd_{c['id']}")
+                start = b.time_input("Start (blank = class time)", value=datetime.strptime(c["start_time"], "%H:%M").time() if c.get("start_time") else None, step=900, key=f"exs_{c['id']}")
+                end = d.time_input("End", value=datetime.strptime(c["end_time"], "%H:%M").time() if c.get("end_time") else None, step=900, key=f"exe_{c['id']}")
+                x, y = st.columns(2)
+                ok = x.form_submit_button("Add to calendar", type="primary")
+                no = y.form_submit_button("Not an exam")
+            if ok:
+                out = exam_finder.confirm(c["id"], day, start, end)
+                ui.flash(f"Added **{out.get('added')}** on {out.get('when')}." + (f" ({out['note']})" if out.get("note") else ""))
+                st.rerun()
+            if no:
+                exam_finder.dismiss(c["id"])
+                st.rerun()
+    confirmed = db.list_exam_candidates("added")
+    if confirmed:
+        with st.expander(f"On your calendar ({len(confirmed)})"):
+            for c in confirmed:
+                st.write(f"{c['name']} · {datetime.fromisoformat(c['date']):%a %b %d}")
+    if st.button("Look for exam dates again", help="Re-reads every class, even ones that haven't changed"):
+        with st.spinner("Reading course content..."):
+            try:
+                ui.flash(exam_finder.run(force=True))
+            except Exception as e:
+                ui.flash(f"{type(e).__name__}: {e}", "error")
+        st.rerun()
 
 # ---------- Google ----------
 

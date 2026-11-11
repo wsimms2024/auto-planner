@@ -109,6 +109,11 @@ Telegram bot tells you to reconnect.
 - The bot answers "what do I need for Assignment 6?" and "what's my grade in
   ISTM 4205?"
 
+**Exam dates** are found automatically in each class's syllabus, announcements,
+course pages, calendar and gradebook (newer announcements beat the syllabus).
+Confirm them on Sync → Exam dates or by texting the bot; confirmed exams go on
+your calendar and exam mode plans the review. Changed dates are flagged.
+
 If something doesn't come through right, Sync → Blackboard → Troubleshooting →
 **Save sample data** writes Blackboard's raw responses to `data/bb_debug`.
 

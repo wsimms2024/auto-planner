@@ -41,6 +41,13 @@ def morning_text(now: datetime | None = None) -> str:
         lines.append("Good times to study today:")
         lines += [f"{_t(s.start)}-{_t(s.end)} {names.get(s.task_id, '')}" for s in todays[:3]]
 
+    to_confirm = db.list_exam_candidates("pending")
+    if to_confirm:
+        lines.append("")
+        lines.append(f"Found {len(to_confirm)} exam date{'s' if len(to_confirm) != 1 else ''} to confirm: "
+                     + ", ".join(f"{c['name']} {date.fromisoformat(c['date']):%b %d}".replace(' 0', ' ') for c in to_confirm[:3])
+                     + ". Reply \"confirm them\" or check the Sync page.")
+
     if today.weekday() in prefs.gym_days:
         gym = planner_tools.suggest_gym_time("today", now)
         if not gym["already_scheduled"] and gym["options"]:

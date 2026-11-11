@@ -317,7 +317,7 @@ def fetch(client: BBClient, now: datetime) -> dict:
     memberships = client.get_all(f"{API}/v1/users/{me['id']}/courses", expand="course", limit=100)
     courses = parse_courses(memberships)
 
-    result = {"courses": courses, "assignments": [], "grades": []}
+    result = {"courses": courses, "assignments": [], "grades": [], "texts": []}
     for course in courses:
         columns = _columns(client, course.id)
         my_grades = _my_grades(client, course.id, me["id"], columns)
@@ -329,7 +329,40 @@ def fetch(client: BBClient, now: datetime) -> dict:
                 a.attachments = _download_attachments(client, course, a)
         result["assignments"] += assignments
         result["grades"] += parse_grades(course, columns, my_grades)
+        result["texts"] += course_texts(client, course, contents, columns, now)
     return result
+
+
+def course_texts(client: BBClient, course: Course, contents: list[dict], columns: list[dict], now: datetime) -> list[dict]:
+    """Everything readable in a course, for finding exam dates: announcements, pages, calendar, gradebook names, syllabus."""
+    rows = []
+    for a in client.get_all(f"{API}/v1/courses/{course.id}/announcements", limit=100) or []:
+        rows.append({"id": f"ann:{a['id']}", "course_id": course.id, "kind": "announcement", "title": a.get("title", ""),
+                     "text": html_to_text(a.get("body")), "posted_at": a.get("created") or a.get("modified")})
+    for item in contents:
+        text = html_to_text(item.get("body") or item.get("description"))
+        if item.get("title") or text:
+            rows.append({"id": f"content:{item['id']}", "course_id": course.id, "kind": "content", "title": item.get("title", ""),
+                         "text": text, "posted_at": item.get("created")})
+    status, page = client.try_get(f"{API}/v1/calendars/items", since=(now - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z"),
+                                  until=(now + timedelta(days=150)).strftime("%Y-%m-%dT00:00:00Z"), courseId=course.id, limit=200)
+    if status == 200 and page:
+        for ev in page.get("results", []):
+            if ev.get("calendarId") in (course.id, None) or ev.get("calendarName", "").startswith(course.code[:4]):
+                rows.append({"id": f"cal:{ev.get('id')}", "course_id": course.id, "kind": "calendar", "title": ev.get("title", ""),
+                             "text": f"{ev.get('title', '')}: {ev.get('start', '')} to {ev.get('end', '')} {ev.get('location', '') or ''}".strip(),
+                             "posted_at": None})
+    for col in columns:
+        due = (col.get("grading") or {}).get("due")
+        if due:
+            rows.append({"id": f"col:{col['id']}", "course_id": course.id, "kind": "gradebook", "title": col.get("name", ""),
+                         "text": f"{col.get('name', '')} due {due}", "posted_at": None})
+    from autoplan import prep
+
+    for path in course.syllabus:
+        rows.append({"id": f"syl:{Path(path).name}", "course_id": course.id, "kind": "syllabus", "title": Path(path).name,
+                     "text": prep.extract_text(path), "posted_at": None})
+    return rows
 
 
 def _columns(client: BBClient, course_id: str) -> list[dict]:
@@ -424,6 +457,7 @@ def save(data: dict, now: datetime) -> str:
             linked += 1
         db.save_bb_assignment(a, a_task, now)
     db.replace_bb_grades([c.id for c in data["courses"]], data["grades"])
+    db.save_course_texts(data.get("texts", []))
     return (f"{len(data['courses'])} courses, {len(data['assignments'])} assignments "
             f"({linked} matched to tasks), {sum(1 for g in data['grades'] if g['score'] is not None)} grades")
 

@@ -76,6 +76,9 @@ with right:
     st.subheader("Needs attention")
     if to_review:
         st.page_link("views/sync.py", label=f"{plural(to_review, 'email')} to review", icon="📬")
+    exams_to_confirm = len(db.list_exam_candidates("pending"))
+    if exams_to_confirm:
+        st.page_link("views/sync.py", label=f"{plural(exams_to_confirm, 'exam date')} to confirm", icon="📝")
     items = [("late", t.name, ui.fmt_due(t.deadline, now)) for t in overdue]
     items += [("", t.name, ui.fmt_due(t.deadline, now)) for t in due_soon]
     items += [("short", task_by_id[i].name, f"{ui.fmt_minutes(m)} won't fit") for i, m in result.unscheduled.items()]

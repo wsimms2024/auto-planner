@@ -110,7 +110,17 @@ def blackboard_details_due(now: datetime | None = None) -> bool:
 def sync_blackboard_details(now: datetime | None = None) -> tuple[bool, str]:
     from autoplan.integrations import bb_scraper
 
-    return _run("blackboard_details", lambda: bb_scraper.sync(now or datetime.now()))
+    def work():
+        from autoplan import exam_finder
+
+        message = bb_scraper.sync(now or datetime.now())
+        try:
+            message += "; " + exam_finder.run(now)
+        except Exception as e:  # finding exams should never break the Blackboard read
+            message += f"; exam dates skipped ({type(e).__name__})"
+        return message
+
+    return _run("blackboard_details", work)
 
 
 def blackboard_needs_login() -> bool:

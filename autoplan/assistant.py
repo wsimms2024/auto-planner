@@ -19,7 +19,7 @@ MAX_TOOL_ROUNDS = 8
 WRITE_TOOLS = {
     "add_task", "mark_task_done", "add_event", "schedule_study_session", "edit_event", "delete_event",
     "update_task", "delete_task", "cancel_study_session", "log_workout", "log_recovery", "set_workout_day",
-    "prep_assignment", "log_grade",
+    "prep_assignment", "log_grade", "confirm_exam", "dismiss_exam",
 }
 
 

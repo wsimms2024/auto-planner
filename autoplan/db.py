@@ -127,6 +127,32 @@ CREATE TABLE IF NOT EXISTS course_grade_settings (
     weights   TEXT NOT NULL DEFAULT '{}'           -- JSON {category: percent}
 );
 
+CREATE TABLE IF NOT EXISTS course_texts (
+    id        TEXT PRIMARY KEY,         -- e.g. ann:_123_1, content:_456_1, cal:_789_1
+    course_id TEXT NOT NULL,
+    kind      TEXT NOT NULL,            -- announcement / content / calendar / syllabus
+    title     TEXT NOT NULL,
+    text      TEXT NOT NULL,
+    posted_at TEXT                      -- when it was posted, if known
+);
+
+CREATE TABLE IF NOT EXISTS exam_candidates (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_id   TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    date        TEXT NOT NULL,          -- ISO date
+    start_time  TEXT,                   -- HH:MM, NULL if not stated
+    end_time    TEXT,
+    location    TEXT,
+    source      TEXT NOT NULL DEFAULT '',
+    quote       TEXT NOT NULL DEFAULT '',
+    confidence  TEXT NOT NULL DEFAULT 'medium',
+    status      TEXT NOT NULL DEFAULT 'pending',   -- pending / added / dismissed
+    event_id    INTEGER,                -- calendar event once you confirm
+    previous    TEXT,                   -- old date/time if a newer source changed it
+    updated_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS prep_notes (
     task_id    INTEGER PRIMARY KEY,
     created_at TEXT NOT NULL,
@@ -886,6 +912,68 @@ def set_course_grade_settings(course_id: str, mode: str | None = None, weights: 
     with get_connection(db_path) as conn:
         conn.execute("INSERT OR REPLACE INTO course_grade_settings (course_id, mode, weights) VALUES (?, ?, ?)",
                      (course_id, current["mode"], json.dumps(current["weights"])))
+
+
+# ---------- Course text and exam dates ----------
+
+def save_course_texts(rows: list[dict], db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        for r in rows:
+            conn.execute(
+                "INSERT OR REPLACE INTO course_texts (id, course_id, kind, title, text, posted_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (r["id"], r["course_id"], r["kind"], r["title"], r["text"], r.get("posted_at")),
+            )
+
+
+def list_course_texts(course_id: str, db_path: Optional[Path] = None) -> list[dict]:
+    with get_connection(db_path) as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM course_texts WHERE course_id = ? ORDER BY kind = 'syllabus' DESC, posted_at IS NULL DESC, posted_at", (course_id,))]
+
+
+def list_exam_candidates(status: str | None = None, db_path: Optional[Path] = None) -> list[dict]:
+    sql, params = "SELECT e.*, c.code AS course_code FROM exam_candidates e LEFT JOIN bb_courses c ON c.id = e.course_id", []
+    if status:
+        sql += " WHERE e.status = ?"
+        params.append(status)
+    sql += " ORDER BY e.date, e.start_time"
+    with get_connection(db_path) as conn:
+        return [dict(r) for r in conn.execute(sql, params)]
+
+
+def upsert_exam_candidate(c: dict, db_path: Optional[Path] = None) -> str:
+    """
+    Match on course + name. New -> pending. Same date/time -> left alone.
+    Different date/time -> updated, back to pending with the old value kept in `previous`.
+    Returns 'new', 'changed' or 'same'.
+    """
+    now = datetime.now().isoformat()
+    with get_connection(db_path) as conn:
+        row = conn.execute("SELECT * FROM exam_candidates WHERE course_id = ? AND lower(name) = lower(?)", (c["course_id"], c["name"])).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO exam_candidates (course_id, name, date, start_time, end_time, location, source, quote, confidence, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (c["course_id"], c["name"], c["date"], c.get("start_time"), c.get("end_time"), c.get("location"),
+                 c.get("source", ""), c.get("quote", ""), c.get("confidence", "medium"), now),
+            )
+            return "new"
+        if row["date"] == c["date"] and (row["start_time"] or "") == (c.get("start_time") or "") or row["status"] == "dismissed" and row["date"] == c["date"]:
+            return "same"
+        previous = f"{row['date']} {row['start_time'] or ''}".strip()
+        conn.execute(
+            "UPDATE exam_candidates SET date = ?, start_time = ?, end_time = ?, location = COALESCE(?, location), source = ?, quote = ?, "
+            "confidence = ?, status = CASE WHEN status = 'dismissed' THEN 'dismissed' ELSE 'pending' END, previous = ?, updated_at = ? WHERE id = ?",
+            (c["date"], c.get("start_time"), c.get("end_time"), c.get("location"), c.get("source", ""), c.get("quote", ""),
+             c.get("confidence", "medium"), previous, now, row["id"]),
+        )
+        return "changed"
+
+
+def set_exam_status(candidate_id: int, status: str, event_id: int | None = None, db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE exam_candidates SET status = ?, event_id = COALESCE(?, event_id), previous = NULL WHERE id = ?",
+                     (status, event_id, candidate_id))
 
 
 def save_prep(task_id: int, content: dict, db_path: Optional[Path] = None) -> None:

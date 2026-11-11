@@ -537,6 +537,38 @@ def set_workout_day(split_day: str) -> dict:
     return {"workout_day": day, "exercises": plan["exercises"], "readiness": plan["readiness"]["status"]}
 
 
+# ---------- Exam dates ----------
+
+def get_exam_dates() -> dict:
+    """Exams found in course content: ones waiting for confirmation and ones on the calendar."""
+    def row(c):
+        return {"id": c["id"], "name": c["name"], "date": c["date"], "time": c.get("start_time"), "source": c["source"],
+                "evidence": c["quote"], "confidence": c["confidence"], "changed_from": c.get("previous")}
+    return {"to_confirm": [row(c) for c in db.list_exam_candidates("pending")],
+            "on_calendar": [row(c) for c in db.list_exam_candidates("added")]}
+
+
+def confirm_exam(exam_id: int, date: str | None = None, start_time: str | None = None, end_time: str | None = None) -> dict:
+    """Put a found exam on the calendar. Optional date (YYYY-MM-DD) and times (HH:MM) override what was found."""
+    from datetime import date as _date, time as _time
+
+    from autoplan import exam_finder
+
+    return exam_finder.confirm(
+        int(exam_id),
+        _date.fromisoformat(date) if date else None,
+        _time.fromisoformat(start_time) if start_time else None,
+        _time.fromisoformat(end_time) if end_time else None,
+    )
+
+
+def dismiss_exam(exam_id: int) -> dict:
+    from autoplan import exam_finder
+
+    exam_finder.dismiss(int(exam_id))
+    return {"deleted": f"exam suggestion {exam_id}"}
+
+
 # ---------- Tool definitions for Claude ----------
 
 DAY = {"type": "string", "description": "'today', 'tomorrow', a weekday name, or YYYY-MM-DD"}
@@ -622,6 +654,14 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"split_day": {"type": "string", "description": "Push, Pull, Legs, Upper, Lower or Rest"}}}},
     {"name": "set_workout_day", "description": "Set today's split day when Will says what he's training (e.g. 'today is legs'). Returns the plan for that day.",
      "input_schema": {"type": "object", "properties": {"split_day": {"type": "string"}}, "required": ["split_day"]}},
+    {"name": "get_exam_dates", "description": "Exams found in Blackboard content (syllabus, announcements, pages): ones to confirm, with evidence, and ones already on the calendar.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "confirm_exam", "description": "Put a found exam on the calendar (by id from get_exam_dates). Pass date/times only if Will corrects them.",
+     "input_schema": {"type": "object", "properties": {
+         "exam_id": {"type": "integer"}, "date": {"type": "string"}, "start_time": {"type": "string"}, "end_time": {"type": "string"}},
+      "required": ["exam_id"]}},
+    {"name": "dismiss_exam", "description": "Drop an exam suggestion that isn't really an exam.",
+     "input_schema": {"type": "object", "properties": {"exam_id": {"type": "integer"}}, "required": ["exam_id"]}},
     {"name": "schedule_study_session", "description": "Put a study session for a task on the calendar. Only when Will agrees to a time.",
      "input_schema": {"type": "object", "properties": {
          "task_name": {"type": "string"},
@@ -649,6 +689,9 @@ FUNCTIONS = {
     "get_grades": get_grades,
     "grade_needed": grade_needed,
     "log_grade": log_grade,
+    "get_exam_dates": get_exam_dates,
+    "confirm_exam": confirm_exam,
+    "dismiss_exam": dismiss_exam,
     "log_workout": log_workout,
     "log_recovery": log_recovery,
     "get_workout_plan": get_workout_plan,
