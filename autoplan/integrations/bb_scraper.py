@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from autoplan import config, db
 
 PROFILE_DIR = config.PROJECT_ROOT / "data" / "bb_profile"
+STATE_PATH = config.PROJECT_ROOT / "data" / "bb_session.json"  # saved cookies (incl. session cookies)
 FILES_DIR = config.PROJECT_ROOT / "data" / "bb_files"
 DEBUG_DIR = config.PROJECT_ROOT / "data" / "bb_debug"
 API = "/learn/api/public"
@@ -35,7 +36,31 @@ class NeedsLogin(Exception):
 
 
 def has_login() -> bool:
-    return PROFILE_DIR.exists() and any(PROFILE_DIR.iterdir())
+    return STATE_PATH.exists() or (PROFILE_DIR.exists() and any(PROFILE_DIR.iterdir()))
+
+
+# The background browser reports itself as normal Chrome; some sign-in systems
+# turn away "HeadlessChrome".
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+
+
+def _signed_in(ctx) -> bool:
+    r = ctx.request.get(config.BLACKBOARD_URL + f"{API}/v1/users/me", fail_on_status_code=False)
+    return r.ok and r.headers.get("content-type", "").startswith("application/json")
+
+
+def _save_state(ctx) -> None:
+    """Save every cookie, including session-only ones the browser would otherwise drop on close."""
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ctx.storage_state(path=str(STATE_PATH))
+
+
+def _load_state(ctx) -> None:
+    if STATE_PATH.exists():
+        cookies = json.loads(STATE_PATH.read_text(encoding="utf-8")).get("cookies", [])
+        if cookies:
+            ctx.add_cookies(cookies)
 
 
 # ---------- Login (opens a visible browser once) ----------
@@ -46,16 +71,16 @@ def login_interactive(timeout_seconds: int = 300) -> bool:
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(str(PROFILE_DIR), headless=False)
+        ctx = p.chromium.launch_persistent_context(str(PROFILE_DIR), headless=False, user_agent=USER_AGENT)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(config.BLACKBOARD_URL + "/ultra/course")
         deadline = datetime.now() + timedelta(seconds=timeout_seconds)
         try:
             while datetime.now() < deadline:
                 page.wait_for_timeout(2000)
-                r = ctx.request.get(config.BLACKBOARD_URL + f"{API}/v1/users/me", fail_on_status_code=False)
-                if r.ok and r.headers.get("content-type", "").startswith("application/json"):
+                if _signed_in(ctx):
                     page.wait_for_timeout(1500)  # let the cookies settle
+                    _save_state(ctx)
                     return True
             return False
         finally:
@@ -72,20 +97,55 @@ class BBClient:
             raise NeedsLogin("Connect Blackboard on the Sync page first.")
         from playwright.sync_api import sync_playwright
 
+        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
         self._pw = sync_playwright().start()
-        self.ctx = self._pw.chromium.launch_persistent_context(str(PROFILE_DIR), headless=True)
+        self.ctx = self._pw.chromium.launch_persistent_context(str(PROFILE_DIR), headless=True, user_agent=USER_AGENT)
+        _load_state(self.ctx)
+        if not _signed_in(self.ctx) and not self._quiet_relogin():
+            detail = self._describe_me()
+            self.__exit__()
+            raise NeedsLogin(f"Your Blackboard login expired. Connect Blackboard again on the Sync page. ({detail})")
         return self
 
     def __exit__(self, *exc):
+        try:
+            if _signed_in(self.ctx):
+                _save_state(self.ctx)  # keep refreshed cookies for next time
+        except Exception:
+            pass
         self.ctx.close()
         self._pw.stop()
+
+    def _quiet_relogin(self) -> bool:
+        """Open Blackboard in the background; if GW's sign-in still remembers you, this logs back in with no Duo."""
+        try:
+            page = self.ctx.new_page()
+            page.goto(config.BLACKBOARD_URL + "/ultra/course", wait_until="domcontentloaded", timeout=30000)
+            for _ in range(10):
+                page.wait_for_timeout(1500)
+                if _signed_in(self.ctx):
+                    _save_state(self.ctx)
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _describe_me(self) -> str:
+        """What Blackboard sent back, to make a failed login easy to diagnose."""
+        try:
+            r = self.ctx.request.get(config.BLACKBOARD_URL + f"{API}/v1/users/me", fail_on_status_code=False, max_redirects=0)
+            where = r.headers.get("location", "")
+            return f"Blackboard answered {r.status} {r.headers.get('content-type', '').split(';')[0]}" + (f", redirect to {where[:80]}" if where else "")
+        except Exception as e:
+            return f"{type(e).__name__}"
 
     def get(self, path: str, **params):
         url = path if path.startswith("http") else config.BLACKBOARD_URL + path
         r = self.ctx.request.get(url, params=params or None, fail_on_status_code=False)
         is_json = r.headers.get("content-type", "").startswith("application/json")
         if r.status in (401, 403) or (r.ok and not is_json):
-            raise NeedsLogin("Your Blackboard login expired. Connect Blackboard again on the Sync page.")
+            raise NeedsLogin(f"Your Blackboard login expired. Connect Blackboard again on the Sync page. "
+                             f"(Blackboard answered {r.status} {r.headers.get('content-type', '').split(';')[0]} for {path.split('?')[0][-60:]})")
         if not r.ok:
             return None  # e.g. 404 for a course feature that isn't used
         return r.json()

@@ -22,6 +22,7 @@ def temp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(bb_scraper, "FILES_DIR", tmp_path / "bb_files")
     monkeypatch.setattr(bb_scraper, "PROFILE_DIR", tmp_path / "bb_profile")
+    monkeypatch.setattr(bb_scraper, "STATE_PATH", tmp_path / "bb_session.json")
     db.init_db()
 
 

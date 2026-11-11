@@ -191,6 +191,7 @@ with bb_tab:
             import shutil
 
             shutil.rmtree(bb_scraper.PROFILE_DIR, ignore_errors=True)
+            bb_scraper.STATE_PATH.unlink(missing_ok=True)
             ui.flash("Disconnected. Saved assignment details and grades stay until the next connect.")
             st.rerun()
         with st.expander("Troubleshooting"):
