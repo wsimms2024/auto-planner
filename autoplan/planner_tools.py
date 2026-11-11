@@ -467,12 +467,41 @@ def log_recovery(text: str) -> dict:
     return {"saved": actions.handle_recovery(text)}
 
 
-def get_workout_plan() -> dict:
-    """Today's workout digest as structured data (split day, readiness, exercises with targets, progress)."""
-    from autoplan.workout import digest
+def get_workout_plan(split_day: str | None = None) -> dict:
+    """
+    Today's workout as structured data. Pass split_day to preview another day's plan
+    without changing anything (use set_workout_day to actually switch today).
+    """
+    from autoplan.workout import digest, engine, recovery, settings, store
 
+    if split_day:
+        day = _split_name(split_day)
+        if not day:
+            return {"error": f"Split days are {', '.join(dict.fromkeys(settings.SPLIT))}."}
+        check = recovery.assess(store.get_recovery(datetime.now().date()))
+        plan = engine.apply_recovery(engine.plan_for(day), check["adjust"]) if day != "Rest" else []
+        return {"preview_of": day, "exercises": [p.__dict__ for p in plan], "readiness": check["status"]}
     d = digest.build(use_llm=False)
     return {k: d[k] for k in ("split_day", "split_reason", "readiness", "exercises", "progression", "next_split_day")}
+
+
+def _split_name(value: str) -> str | None:
+    from autoplan.workout import settings
+
+    days = {d.lower(): d for d in settings.SPLIT}
+    return days.get(value.strip().lower())
+
+
+def set_workout_day(split_day: str) -> dict:
+    """Make today a given split day (e.g. when Will says 'today is legs'). Returns today's plan for it."""
+    from autoplan.workout import store
+
+    day = _split_name(split_day)
+    if not day:
+        return {"error": f"Unknown split day '{split_day}'."}
+    store.set_split_override(datetime.now().date(), day)
+    plan = get_workout_plan()
+    return {"workout_day": day, "exercises": plan["exercises"], "readiness": plan["readiness"]["status"]}
 
 
 # ---------- Tool definitions for Claude ----------
@@ -550,8 +579,10 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"log_text": {"type": "string"}}, "required": ["log_text"]}},
     {"name": "log_recovery", "description": "Save today's recovery check-in. Format: 'sleep 7.5 quality 4 energy 4 sore low bw 165 elbow 0 joint 0 alcohol no lowcal no sick none' (include only what he said).",
      "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
-    {"name": "get_workout_plan", "description": "Today's workout plan: split day, readiness, exercises with sets/reps/target loads/RPE, progress toward goals. Use for any gym or lifting question. Never invent numbers.",
-     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "get_workout_plan", "description": "Today's workout plan: split day, readiness, exercises with sets/reps/target loads/RPE, progress toward goals. Pass split_day to preview another day without changing anything. Never invent numbers.",
+     "input_schema": {"type": "object", "properties": {"split_day": {"type": "string", "description": "Push, Pull, Legs, Upper, Lower or Rest"}}}},
+    {"name": "set_workout_day", "description": "Set today's split day when Will says what he's training (e.g. 'today is legs'). Returns the plan for that day.",
+     "input_schema": {"type": "object", "properties": {"split_day": {"type": "string"}}, "required": ["split_day"]}},
     {"name": "schedule_study_session", "description": "Put a study session for a task on the calendar. Only when Will agrees to a time.",
      "input_schema": {"type": "object", "properties": {
          "task_name": {"type": "string"},
@@ -581,6 +612,7 @@ FUNCTIONS = {
     "log_workout": log_workout,
     "log_recovery": log_recovery,
     "get_workout_plan": get_workout_plan,
+    "set_workout_day": set_workout_day,
 }
 
 

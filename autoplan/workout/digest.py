@@ -22,7 +22,11 @@ def build(today: date | None = None, now: datetime | None = None, llm_client=Non
     now = now or datetime.now()
     today = today or now.date()
     sessions = store.list_sessions(limit=30)
-    split = engine.split_today(today, sessions, store.get_split_override(today))
+    override = store.get_split_override(today)
+    from_calendar = None if override else calendar_split(today)
+    split = engine.split_today(today, sessions, override or (from_calendar[0] if from_calendar else None))
+    if from_calendar and not split["done_today"]:
+        split["reason"] = f"from your calendar ({from_calendar[1]})"
     day = split["day"]
 
     check = recovery.assess(store.get_recovery(today))
@@ -51,6 +55,20 @@ def build(today: date | None = None, now: datetime | None = None, llm_client=Non
     }
     digest["coach_note"] = coach_note(digest, llm_client if use_llm else False)
     return digest
+
+
+def calendar_split(day: date) -> tuple[str, str] | None:
+    """A gym event today named after a split day ('Legs', 'push day') decides today's workout."""
+    import re
+
+    from autoplan import db, scheduler
+
+    names = {d.lower(): d for d in settings.SPLIT if d != "Rest"}
+    for e in scheduler.expand_events(db.list_events(), day, day):
+        m = re.search(r"\b(" + "|".join(names) + r")\b", e.name.lower())
+        if m:
+            return names[m.group(1)], f"{e.name} at {e.start:%I:%M %p}".replace(" 0", " ")
+    return None
 
 
 # ---------- Coach note ----------
