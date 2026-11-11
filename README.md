@@ -62,6 +62,25 @@ estimate guessed from the name (`autoplan/task_rules.py`); your edits survive re
 
 Tweak sync timing and how far back email is scanned in `autoplan/config.py`.
 
+## Daily workout digest (Telegram)
+
+A strength-coach message each morning (after the briefing) or on `/digest`:
+split day, readiness, today's lifts with sets/reps/loads/RPE and why,
+progress toward 315/405/500, fueling, and what's next. All numbers come from
+code in `autoplan/workout/engine.py`; Claude only writes the short coach note.
+
+- `/log push; bench 240 4x4 @8; incline db 70 3x10 @9` logs a session
+  (reps per set like `4,4,4,3` mark missed reps). You can also just tell the
+  bot what you did in plain words.
+- `/recovery sleep 7.5 energy 4 sore low bw 165 elbow 0` sets today's readiness.
+- `/fuel 60 eggs and bacon, apple` checks pre-workout food.
+- `/progress`, `/weekly`, `/settings`, and buttons under the digest.
+
+The split day comes from your last logged workout, not the weekday. Edit the
+split, goals, programs (pyramid or 5/3/1), exercises and starting numbers in
+`autoplan/workout/settings.py`. Liftoff can plug in later through
+`autoplan/workout/sources.py`.
+
 ## Blackboard details, Prep, and grades
 
 One-time setup on the computer that runs AutoPlan:
@@ -128,6 +147,8 @@ pytest
 | `autoplan/integrations/bb_scraper.py` | Blackboard login, reading courses, assignments, grades | Change what gets read |
 | `autoplan/prep.py` | The Prep button's instructions to Claude | Change what Prep gives you |
 | `autoplan/grades.py` | Grade math and letter scale | Match a syllabus's scale |
+| `autoplan/workout/settings.py` | Split, goals, programs, exercises, starting numbers | Change your training |
+| `autoplan/workout/engine.py` | Progression and load math | Change how weights progress |
 | `autoplan/config.py` | DB path, categories, default preferences | Change defaults for a new database |
 | `tests/` | pytest tests | Add scenarios |
 
@@ -178,7 +199,11 @@ overlap check, color-coded weekly grid, dashboard.
 - Robinhood holdings in the dashboard and bot (read-only)
 - ~~Blackboard scraper: assignment details, a Prep button, and a grade tracker~~
 
+- ~~Daily workout digest on Telegram~~
+
 ### Later
+- Liftoff import for the workout digest
+- Shareable image card for the workout digest
 - Tailscale so the dashboard works on your phone away from home
 - Workload analytics
 - Scheduling based on your past productivity

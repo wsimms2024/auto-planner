@@ -49,6 +49,8 @@ with st.form("settings"):
     c1, c2 = st.columns(2)
     briefing_on = c1.checkbox("Send a morning briefing on Telegram", value=prefs.briefing_on)
     briefing_time = c2.time_input("Send at", value=prefs.briefing_time, step=900)
+    digest_on = st.checkbox("Include the workout digest", value=db.get_preference_value("workout_digest_on") is not False,
+                            help="Your split, readiness and today's lifts, right after the morning text")
 
     saved = st.form_submit_button("Save settings", type="primary")
 
@@ -73,5 +75,6 @@ if saved:
             st.error(p)
     else:
         db.save_preferences(new_prefs)
+        db.set_preference("workout_digest_on", bool(digest_on))
         ui.flash("Settings saved. Suggestions now use the new rules.")
         st.rerun()

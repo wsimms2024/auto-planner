@@ -451,6 +451,30 @@ def grade_needed(course: str, target_letter: str = "B+") -> dict:
     return {"course": c["code"], "target": target_letter, **need}
 
 
+# ---------- Workouts ----------
+
+def log_workout(log_text: str) -> dict:
+    """Save a workout given in /log format: 'push; bench 240 4x4 @8; incline db 70 3x10 @9'."""
+    from autoplan.workout import actions
+
+    return {"saved": actions.handle_log(log_text)}
+
+
+def log_recovery(text: str) -> dict:
+    """Save today's recovery check-in, e.g. 'sleep 7 energy 3 sore low bw 165 elbow 2'."""
+    from autoplan.workout import actions
+
+    return {"saved": actions.handle_recovery(text)}
+
+
+def get_workout_plan() -> dict:
+    """Today's workout digest as structured data (split day, readiness, exercises with targets, progress)."""
+    from autoplan.workout import digest
+
+    d = digest.build(use_llm=False)
+    return {k: d[k] for k in ("split_day", "split_reason", "readiness", "exercises", "progression", "next_split_day")}
+
+
 # ---------- Tool definitions for Claude ----------
 
 DAY = {"type": "string", "description": "'today', 'tomorrow', a weekday name, or YYYY-MM-DD"}
@@ -522,6 +546,12 @@ TOOLS = [
     {"name": "grade_needed", "description": "What average Will needs on the remaining work to finish a course with a target letter grade.",
      "input_schema": {"type": "object", "properties": {
          "course": {"type": "string"}, "target_letter": {"type": "string", "description": "e.g. A, A-, B+"}}, "required": ["course"]}},
+    {"name": "log_workout", "description": "Log a workout Will describes. Convert it to this format: 'push; bench 240 4x4 @8; incline db 70 3x10 @9; pullups bw 2x8'. Split day first (push/pull/legs/upper/lower), then exercise weight setsxreps @rpe, separated by semicolons. Reps per set like '4,4,4,3' also work.",
+     "input_schema": {"type": "object", "properties": {"log_text": {"type": "string"}}, "required": ["log_text"]}},
+    {"name": "log_recovery", "description": "Save today's recovery check-in. Format: 'sleep 7.5 quality 4 energy 4 sore low bw 165 elbow 0 joint 0 alcohol no lowcal no sick none' (include only what he said).",
+     "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+    {"name": "get_workout_plan", "description": "Today's workout plan: split day, readiness, exercises with sets/reps/target loads/RPE, progress toward goals. Use for any gym or lifting question. Never invent numbers.",
+     "input_schema": {"type": "object", "properties": {}}},
     {"name": "schedule_study_session", "description": "Put a study session for a task on the calendar. Only when Will agrees to a time.",
      "input_schema": {"type": "object", "properties": {
          "task_name": {"type": "string"},
@@ -548,6 +578,9 @@ FUNCTIONS = {
     "prep_assignment": prep_assignment,
     "get_grades": get_grades,
     "grade_needed": grade_needed,
+    "log_workout": log_workout,
+    "log_recovery": log_recovery,
+    "get_workout_plan": get_workout_plan,
 }
 
 

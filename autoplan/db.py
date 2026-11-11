@@ -109,6 +109,52 @@ CREATE TABLE IF NOT EXISTS prep_notes (
     content    TEXT NOT NULL             -- JSON from the Prep button
 );
 
+CREATE TABLE IF NOT EXISTS workout_sessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT    NOT NULL,          -- ISO date
+    split_day   TEXT    NOT NULL,
+    notes       TEXT    NOT NULL DEFAULT '',
+    source      TEXT    NOT NULL DEFAULT 'manual',  -- manual / liftoff
+    external_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS workout_sets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL REFERENCES workout_sessions(id),
+    exercise    TEXT    NOT NULL,
+    set_no      INTEGER NOT NULL,
+    weight      REAL,
+    reps        INTEGER NOT NULL,
+    target_reps INTEGER,                   -- what was planned, to spot missed reps
+    rpe         REAL
+);
+
+CREATE TABLE IF NOT EXISTS recovery_logs (
+    date          TEXT PRIMARY KEY,
+    sleep_hours   REAL,
+    sleep_quality INTEGER,                 -- 1-5
+    bodyweight    REAL,
+    soreness      INTEGER,                 -- 1-5
+    energy        INTEGER,                 -- 1-5
+    illness       TEXT,                    -- none / mild / improving / systemic
+    elbow_pain    INTEGER,                 -- 0-10
+    joint_pain    INTEGER,                 -- 0-10
+    alcohol       INTEGER,
+    low_calories  INTEGER,
+    disrupted     INTEGER,
+    notes         TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS fueling_logs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    logged_at     TEXT NOT NULL,
+    minutes_to_gym INTEGER,
+    food          TEXT NOT NULL,
+    carbs         REAL,
+    protein       REAL,
+    fat           REAL
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
     source   TEXT PRIMARY KEY,           -- google, gmail, blackboard
     last_run TEXT NOT NULL,
