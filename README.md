@@ -127,9 +127,13 @@ If something doesn't come through right, Sync → Blackboard → Troubleshooting
 3. Ask things like "when should I go to the gym today?" or "anything due for
    ISTM 4205 tomorrow, and when should I start?"
 
-The bot also sends a morning briefing, asks after each study session whether
-you did it (missed ones get rescheduled), and keeps Google and Blackboard
-synced. Gym days and the briefing time are on the Settings page.
+The bot also sends a morning briefing and asks after each study session
+whether you did it (missed ones get rescheduled). Every 2 hours it syncs
+Google Calendar, Gmail, Blackboard and exam dates, and texts you only when
+something important changed: a new assignment or moved due date, a posted
+grade, an exam date found or changed, an email from Blackboard or a professor,
+or a class cancelled in the next 48 hours. Alerts wait out quiet hours
+(11 PM to 7 AM). Change the interval and quiet hours in `autoplan/config.py`. Gym days and the briefing time are on the Settings page.
 
 `start_autoplan.bat` starts the app and the bot together. Put a shortcut to it
 in `shell:startup` on an always-on computer.

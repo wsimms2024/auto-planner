@@ -18,7 +18,8 @@ st.title("AutoPlan")
 st.caption(f"{today:%A, %B} {today.day}")
 ui.show_flash()
 
-# Sync connected accounts if it's been a while (see AUTO_SYNC_MINUTES in config.py)
+# Sync connected accounts if it's been a while (see AUTO_SYNC_MINUTES in config.py).
+# The Telegram bot also syncs every 2 hours and texts you about important changes.
 if sync.due_for_auto_sync(now):
     with st.spinner("Syncing..."):
         failed = [name for name, ok, _ in sync.sync_all(now) if not ok]

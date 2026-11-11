@@ -104,7 +104,8 @@ def blackboard_details_due(now: datetime | None = None) -> bool:
         return False
     last_run, _ = db.get_sync_state("blackboard_details")
     now = now or datetime.now()
-    return last_run is None or now - last_run > timedelta(hours=config.BLACKBOARD_SCRAPE_HOURS)
+    # 10 minutes of slack so it lines up with the 2-hour schedule instead of slipping a cycle
+    return last_run is None or now - last_run > timedelta(hours=config.BLACKBOARD_SCRAPE_HOURS) - timedelta(minutes=10)
 
 
 def sync_blackboard_details(now: datetime | None = None) -> tuple[bool, str]:
@@ -126,6 +127,34 @@ def sync_blackboard_details(now: datetime | None = None) -> tuple[bool, str]:
 def blackboard_needs_login() -> bool:
     _, message = db.get_sync_state("blackboard_details")
     return "NeedsLogin" in message
+
+
+def scheduled_sync_due(now: datetime | None = None) -> bool:
+    """The bot's every-SYNC_EVERY_HOURS full sync."""
+    now = now or datetime.now()
+    last_run, _ = db.get_sync_state("scheduled")
+    return last_run is None or now - last_run >= timedelta(hours=config.SYNC_EVERY_HOURS) - timedelta(minutes=5)
+
+
+def in_quiet_hours(now: datetime | None = None) -> bool:
+    start, end = config.QUIET_HOURS
+    hour = (now or datetime.now()).hour
+    return hour >= start or hour < end
+
+
+def run_scheduled(now: datetime | None = None) -> tuple[list[tuple[str, bool, str]], list[str]]:
+    """
+    Sync every connected source, then work out what's important.
+    Returns (results per source, alert lines). Alerts are held during quiet hours.
+    """
+    from autoplan.integrations import changes
+
+    now = now or datetime.now()
+    results = sync_all(now)
+    db.set_sync_state("scheduled", "; ".join(f"{name}: {'ok' if ok else 'failed'}" for name, ok, _ in results) or "nothing connected", at=now)
+    if in_quiet_hours(now):
+        return results, []
+    return results, changes.check(now)
 
 
 def due_for_auto_sync(now: datetime | None = None) -> bool:

@@ -999,12 +999,12 @@ def get_sync_state(source: str, db_path: Optional[Path] = None) -> tuple[Optiona
     return (_dt(row["last_run"]), row["message"]) if row else (None, "")
 
 
-def set_sync_state(source: str, message: str, db_path: Optional[Path] = None) -> None:
+def set_sync_state(source: str, message: str, db_path: Optional[Path] = None, at: Optional[datetime] = None) -> None:
     with get_connection(db_path) as conn:
         conn.execute(
             "INSERT INTO sync_state (source, last_run, message) VALUES (?, ?, ?) "
             "ON CONFLICT(source) DO UPDATE SET last_run = excluded.last_run, message = excluded.message",
-            (source, datetime.now().isoformat(), message),
+            (source, (at or datetime.now()).isoformat(), message),
         )
 
 

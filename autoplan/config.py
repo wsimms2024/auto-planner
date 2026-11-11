@@ -82,7 +82,11 @@ CLAUDE_MODEL = "claude-sonnet-5-5"
 TIMEZONE = "America/New_York"
 
 # Sync automatically when the app is opened if the last sync is older than this
-AUTO_SYNC_MINUTES = 30
+AUTO_SYNC_MINUTES = 120
+# The Telegram bot syncs everything on this schedule and only texts you about important changes.
+# No alert texts during quiet hours (they're held until morning).
+SYNC_EVERY_HOURS = 2
+QUIET_HOURS = (23, 7)
 
 # Google Calendar: how far back/ahead to import, and the reminder on study sessions
 GOOGLE_SYNC_DAYS_BACK = 7
@@ -100,6 +104,6 @@ GMAIL_PAUSE_SECONDS = 0.25
 # Blackboard scraper: your school's Blackboard address, how often to re-read it,
 # how far ahead to download assignment files, and the biggest file to download
 BLACKBOARD_URL = "https://blackboard.gwu.edu"
-BLACKBOARD_SCRAPE_HOURS = 6
+BLACKBOARD_SCRAPE_HOURS = 2
 BLACKBOARD_FILES_DAYS_AHEAD = 21
 BLACKBOARD_MAX_FILE_MB = 15

@@ -249,11 +249,15 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     now = datetime.now()
 
-    # Keep Google Calendar, Gmail and Blackboard fresh
-    if sync.due_for_auto_sync(now):
-        results = await asyncio.to_thread(sync.sync_all, now)
+    # Every 2 hours: sync everything, text only if something important changed
+    if sync.scheduled_sync_due(now):
+        results, alerts = await asyncio.to_thread(sync.run_scheduled, now)
         for name, ok, message in results:
             log.info("sync %s: %s", name, message)
+        if alerts:
+            text = "🔔 Heads up\n" + "\n".join(alerts)
+            await context.bot.send_message(CHAT_ID, text)
+            get_assistant().note(CHAT_ID, text)
 
     # Blackboard login expired: say so once
     if sync.blackboard_needs_login():
