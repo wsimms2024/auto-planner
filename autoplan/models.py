@@ -37,6 +37,8 @@ class Event:
     source: str = "manual"
     # Its id in that outside system, so re-syncing updates instead of duplicating
     external_id: Optional[str] = None
+    # Days a weekly event is skipped ("no gym today"), without touching the rest
+    skip_dates: list[date] = field(default_factory=list)
 
     @property
     def is_imported(self) -> bool:

@@ -216,6 +216,171 @@ def schedule_study_session(task_name: str, start: str, end: str) -> dict:
     return {"scheduled": task.name, "when": f"{_fmt(s)}-{_fmt_time(e)}"}
 
 
+# ---------- Changing and removing things ----------
+
+def find_events(query: str = "", day: str | None = None, now: datetime | None = None) -> dict:
+    """Events matching a name, optionally on one day. Returns ids to use with edit_event / delete_event."""
+    now = now or datetime.now()
+    q = query.lower().strip()
+    if day:
+        d = parse_day(day, now)
+        start, end = d, d
+    else:
+        start, end = now.date(), now.date() + timedelta(days=14)
+    seen, rows = set(), []
+    for e in scheduler.expand_events(db.list_events(), start, end):
+        if q and q not in e.name.lower():
+            continue
+        if not day and e.id in seen:
+            continue  # without a day, list each event once (next occurrence)
+        seen.add(e.id)
+        rows.append({
+            "event_id": e.id,
+            "name": e.name,
+            "date": e.start.date().isoformat(),
+            "when": f"{_fmt(e.start)}-{_fmt_time(e.end)}",
+            "repeats_weekly": bool(db.get_event(e.id).recurrence_days),
+            "from": e.source,
+        })
+    return {"events": rows[:15]} if rows else {"events": [], "note": f"No events matching '{query}'."}
+
+
+def _google_service():
+    from autoplan.integrations import google_auth
+
+    return google_auth.calendar_service()
+
+
+def edit_event(event_id: int, name: str | None = None, start: str | None = None, end: str | None = None,
+               date: str | None = None, whole_series: bool = False) -> dict:
+    """
+    Rename or move an event. start/end are 'YYYY-MM-DD HH:MM' (or just 'HH:MM' to keep the day).
+    For a weekly event, pass the date of the occurrence; whole_series=True changes every week instead.
+    """
+    event = db.get_event(event_id)
+    if not event or event.deleted_at:
+        return {"error": f"No event with id {event_id}. Use find_events first."}
+    if event.source == "blackboard":
+        return {"error": "Blackboard events can't be changed from here; they come from Blackboard."}
+
+    day = datetime.fromisoformat(date).date() if date else (datetime.fromisoformat(start).date() if start and len(start) > 5 else (datetime.now().date() if event.recurrence_days else event.start.date()))
+
+    def resolve(value: str | None, original: datetime) -> datetime:
+        if not value:
+            return datetime.combine(day, original.time())
+        if len(value) <= 5:  # just a time
+            return datetime.combine(day, datetime.strptime(value, "%H:%M").time())
+        return datetime.fromisoformat(value)
+
+    new_start = resolve(start, event.start)
+    new_end = resolve(end, event.end) if end else new_start + event.duration
+    new_name = name or event.name
+    if new_end <= new_start:
+        return {"error": "End has to be after start."}
+
+    if event.source == "google":
+        _google_change = __import__("autoplan.integrations.google_calendar", fromlist=["x"])
+        _google_change.update_google_event(_google_service(), event.external_id, new_name, new_start, new_end)
+        event.name, event.start, event.end = new_name, new_start, new_end
+        db.upsert_external_event(event)
+        return {"updated_in_google": new_name, "when": f"{_fmt(new_start)}-{_fmt_time(new_end)}"}
+
+    if event.recurrence_days and not whole_series:
+        # Move just this week's occurrence: skip it in the series, add a one-time copy
+        db.skip_event_day(event.id, day)
+        db.add_event(Event(name=new_name, start=new_start, end=new_end, category=event.category))
+        return {"moved_one_day": new_name, "when": f"{_fmt(new_start)}-{_fmt_time(new_end)}",
+                "note": "Other weeks are unchanged."}
+
+    if event.recurrence_days:  # whole series: keep the series' first date, change times/name
+        event.start = datetime.combine(event.start.date(), new_start.time())
+        event.end = event.start + (new_end - new_start)
+    else:
+        event.start, event.end = new_start, new_end
+    event.name = new_name
+    problems = event.validate()
+    if problems:
+        return {"error": " ".join(problems)}
+    db.update_event(event)
+    return {"updated": event.name, "when": f"{_fmt_time(event.start)}-{_fmt_time(event.end)}" + (" every week" if event.recurrence_days else f" on {event.start:%a %b %d}")}
+
+
+def delete_event(event_id: int, date: str | None = None, whole_series: bool = False) -> dict:
+    """
+    Remove an event. For a weekly event, pass the date to cancel just that day,
+    or whole_series=True to remove every week. Deleted events can be restored on the Events page.
+    """
+    event = db.get_event(event_id)
+    if not event or event.deleted_at:
+        return {"error": f"No event with id {event_id}. Use find_events first."}
+    if event.source == "blackboard":
+        return {"error": "Blackboard events can't be deleted from here; they come from Blackboard."}
+
+    if event.source == "google":
+        _google_change = __import__("autoplan.integrations.google_calendar", fromlist=["x"])
+        _google_change.delete_google_event(_google_service(), event.external_id)
+        db.delete_event(event.id)
+        return {"deleted_in_google": event.name, "when": _fmt(event.start)}
+
+    if event.recurrence_days and not whole_series:
+        if not date:
+            return {"error": "This repeats weekly. Give the date to cancel one day, or whole_series=true to remove it entirely."}
+        day = datetime.fromisoformat(date).date()
+        db.skip_event_day(event.id, day)
+        return {"cancelled_one_day": event.name, "date": day.strftime("%a %b %d"), "note": "Other weeks are unchanged."}
+
+    db.delete_event(event.id)
+    return {"deleted": event.name, "note": "Restorable from the Deleted tab on the Events page."}
+
+
+def update_task(task_name: str, new_name: str | None = None, due: str | None = None,
+                minutes: int | None = None, priority: str | None = None, plan_time: bool | None = None) -> dict:
+    task = find_task(task_name)
+    if not task:
+        return {"error": f"No open task matching '{task_name}'."}
+    if new_name:
+        task.name = new_name
+    if due:
+        task.deadline = datetime.fromisoformat(due if " " in due or "T" in due else f"{due} 23:59")
+    if minutes:
+        task.estimated_minutes = int(minutes)
+    if priority in config.PRIORITIES:
+        task.priority = priority
+    if plan_time is not None:
+        task.plan_sessions = bool(plan_time)
+    problems = task.validate()
+    if problems:
+        return {"error": " ".join(problems)}
+    db.update_task(task)
+    return {"updated": task.name, "due": _fmt(task.deadline), "estimate_minutes": task.estimated_minutes,
+            "priority": task.priority, "plan_time": task.plan_sessions}
+
+
+def delete_task(task_name: str) -> dict:
+    task = find_task(task_name, include_done=True)
+    if not task:
+        return {"error": f"No task matching '{task_name}'."}
+    db.delete_task(task.id)
+    return {"deleted": task.name, "note": "Restorable from the Deleted tab on the Tasks page."}
+
+
+def cancel_study_session(task_name: str, date: str | None = None) -> dict:
+    """Remove an upcoming planned study session (the next one, or the one on a given date)."""
+    task = find_task(task_name)
+    if not task:
+        return {"error": f"No open task matching '{task_name}'."}
+    upcoming = [s for s in _accepted() if s.task_id == task.id and s.end > datetime.now()]
+    if date:
+        d = datetime.fromisoformat(date).date()
+        upcoming = [s for s in upcoming if s.start.date() == d]
+    if not upcoming:
+        return {"error": f"No upcoming study session for {task.name}" + (f" on {date}" if date else "") + "."}
+    s = min(upcoming, key=lambda x: x.start)
+    db.set_session_status(s.id, "rejected")
+    return {"cancelled": f"{task.name} {_fmt(s.start)}-{_fmt_time(s.end)}",
+            "note": "It's also removed from Google Calendar on the next sync."}
+
+
 # ---------- Tool definitions for Claude ----------
 
 DAY = {"type": "string", "description": "'today', 'tomorrow', a weekday name, or YYYY-MM-DD"}
@@ -247,6 +412,37 @@ TOOLS = [
          "end": {"type": "string", "description": "YYYY-MM-DD HH:MM"},
          "category": {"type": "string", "enum": config.EVENT_CATEGORIES},
          "allow_overlap": {"type": "boolean"}}, "required": ["name", "start", "end"]}},
+    {"name": "find_events", "description": "Look up events by name and/or day to get their event_id before editing or deleting.",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "Words in the event name; empty for all"},
+         "day": DAY}}},
+    {"name": "edit_event", "description": "Rename or move an event (needs event_id from find_events). For a weekly event, pass the occurrence date; set whole_series only if Will wants every week changed. Google Calendar events are changed in Google too.",
+     "input_schema": {"type": "object", "properties": {
+         "event_id": {"type": "integer"},
+         "name": {"type": "string"},
+         "start": {"type": "string", "description": "'YYYY-MM-DD HH:MM', or 'HH:MM' to keep the day"},
+         "end": {"type": "string", "description": "'YYYY-MM-DD HH:MM' or 'HH:MM'; leave out to keep the same length"},
+         "date": {"type": "string", "description": "YYYY-MM-DD of the occurrence, for weekly events"},
+         "whole_series": {"type": "boolean"}}, "required": ["event_id"]}},
+    {"name": "delete_event", "description": "Delete or cancel an event (needs event_id from find_events). For a weekly event, pass the date to cancel just that day; whole_series removes every week. Google Calendar events are deleted in Google too.",
+     "input_schema": {"type": "object", "properties": {
+         "event_id": {"type": "integer"},
+         "date": {"type": "string", "description": "YYYY-MM-DD, for cancelling one day of a weekly event"},
+         "whole_series": {"type": "boolean"}}, "required": ["event_id"]}},
+    {"name": "update_task", "description": "Change a task's name, due date, estimate, priority, or whether to plan study time for it.",
+     "input_schema": {"type": "object", "properties": {
+         "task_name": {"type": "string"},
+         "new_name": {"type": "string"},
+         "due": {"type": "string", "description": "'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD'"},
+         "minutes": {"type": "integer"},
+         "priority": {"type": "string", "enum": ["High", "Medium", "Low"]},
+         "plan_time": {"type": "boolean"}}, "required": ["task_name"]}},
+    {"name": "delete_task", "description": "Delete a task (restorable in the app).",
+     "input_schema": {"type": "object", "properties": {"task_name": {"type": "string"}}, "required": ["task_name"]}},
+    {"name": "cancel_study_session", "description": "Remove a planned study session for a task (the next one, or the one on a date).",
+     "input_schema": {"type": "object", "properties": {
+         "task_name": {"type": "string"},
+         "date": {"type": "string", "description": "YYYY-MM-DD"}}, "required": ["task_name"]}},
     {"name": "schedule_study_session", "description": "Put a study session for a task on the calendar. Only when Will agrees to a time.",
      "input_schema": {"type": "object", "properties": {
          "task_name": {"type": "string"},
@@ -263,6 +459,12 @@ FUNCTIONS = {
     "mark_task_done": mark_task_done,
     "add_event": add_event,
     "schedule_study_session": schedule_study_session,
+    "find_events": find_events,
+    "edit_event": edit_event,
+    "delete_event": delete_event,
+    "update_task": update_task,
+    "delete_task": delete_task,
+    "cancel_study_session": cancel_study_session,
 }
 
 
@@ -275,3 +477,5 @@ def run_tool(name: str, args: dict) -> dict:
         return fn(**(args or {}))
     except (ValueError, TypeError) as e:
         return {"error": f"Bad input: {e}"}
+    except Exception as e:  # e.g. Google rejected the change
+        return {"error": f"{type(e).__name__}: {e}"}

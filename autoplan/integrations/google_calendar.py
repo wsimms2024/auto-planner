@@ -137,6 +137,29 @@ def import_events(service, calendars: dict[str, str], now: datetime) -> str:
     return f"{added} event{'s' if added != 1 else ''} imported" + (f", {removed} removed" if removed else "")
 
 
+# ---------- Edit or delete an imported event in Google ----------
+
+def _split_id(external_id: str) -> tuple[str, str]:
+    cal_id, _, event_id = external_id.rpartition(":")
+    return cal_id, event_id
+
+
+def update_google_event(service, external_id: str, name: str, start: datetime, end: datetime) -> None:
+    """Change an event's title/time in Google so the next import doesn't undo it."""
+    cal_id, event_id = _split_id(external_id)
+    service.events().patch(calendarId=cal_id, eventId=event_id, body={
+        "summary": name,
+        "start": {"dateTime": to_google(start), "timeZone": config.TIMEZONE},
+        "end": {"dateTime": to_google(end), "timeZone": config.TIMEZONE},
+    }).execute()
+
+
+def delete_google_event(service, external_id: str) -> None:
+    """Delete one event in Google. For a repeating event this removes only that occurrence."""
+    cal_id, event_id = _split_id(external_id)
+    service.events().delete(calendarId=cal_id, eventId=event_id).execute()
+
+
 # ---------- Push study sessions ----------
 
 def push_sessions(service, now: datetime) -> str:

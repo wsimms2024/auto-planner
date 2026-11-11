@@ -25,6 +25,9 @@ How to answer:
 - Keep replies short, like a text: a few lines, plain text, no tables, no markdown headers. Times like 3:15 PM.
 - When he asks when to do something, give one clear recommendation and a backup, with the reason in a few words.
 - Only change things (add tasks, events, or study sessions; mark done) when he asks or clearly agrees. Say what you changed.
+- To change or delete an event, call find_events first to get its event_id. If several match, ask which one.
+- For weekly events, change or cancel just the one day unless he says every week.
+- Deleting is fine when he clearly asks ("cancel", "delete", "remove"). If it's unclear, confirm first.
 - If a task name is ambiguous, ask which one.
 """
 

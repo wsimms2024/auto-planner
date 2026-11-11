@@ -86,6 +86,7 @@ MIGRATIONS = [
     ("study_sessions", "google_event_id", "TEXT"),
     ("tasks", "plan_sessions", "INTEGER NOT NULL DEFAULT 1"),
     ("study_sessions", "followup_sent", "INTEGER NOT NULL DEFAULT 0"),
+    ("events", "skip_dates", "TEXT"),
 ]
 
 INDEXES = """
@@ -167,6 +168,7 @@ def _row_to_event(row: sqlite3.Row) -> Event:
         deleted_at=_dt(row["deleted_at"]),
         source=row["source"],
         external_id=row["external_id"],
+        skip_dates=[date.fromisoformat(d) for d in json.loads(row["skip_dates"] or "[]")],
     )
 
 
@@ -324,6 +326,20 @@ def update_event(event: Event, db_path: Optional[Path] = None) -> None:
             "recurrence_days = ?, recurrence_until = ? WHERE id = ?",
             (*_event_values(event), event.id),
         )
+
+
+def get_event(event_id: int, db_path: Optional[Path] = None) -> Optional[Event]:
+    with get_connection(db_path) as conn:
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+        return _row_to_event(row) if row else None
+
+
+def skip_event_day(event_id: int, day: date, db_path: Optional[Path] = None) -> None:
+    """Cancel one day of a weekly event; the rest of the series stays."""
+    event = get_event(event_id, db_path)
+    days = sorted({*event.skip_dates, day})
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE events SET skip_dates = ? WHERE id = ?", (json.dumps([d.isoformat() for d in days]), event_id))
 
 
 def delete_event(event_id: int, db_path: Optional[Path] = None) -> None:

@@ -71,7 +71,7 @@ def expand_events(events: list[Event], start: date, end: date) -> list[Event]:
         last = min(end, event.recurrence_until)
         day = first
         while day <= last:
-            if day.weekday() in event.recurrence_days:
+            if day.weekday() in event.recurrence_days and day not in event.skip_dates:
                 occ_start = datetime.combine(day, event.start.time())
                 occurrences.append(
                     replace(
