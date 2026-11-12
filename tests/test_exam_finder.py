@@ -106,3 +106,17 @@ def test_past_exams_are_ignored():
     past = {**MIDTERM, "date": "2026-10-01"}
     exam_finder.run(NOW, client=FakeClaude([past]))
     assert db.list_exam_candidates() == []
+
+
+
+def test_one_failing_course_is_retried_next_time():
+    class Broken:
+        def __init__(self):
+            self.messages = self
+
+        def create(self, **kw):
+            raise RuntimeError("model said no")
+
+    msg = exam_finder.run(NOW, client=Broken())
+    assert "couldn't read ISTM 4205 (RuntimeError)" in msg
+    assert "1 new" in exam_finder.run(NOW, client=FakeClaude([MIDTERM]))  # not skipped as unchanged

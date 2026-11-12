@@ -211,7 +211,7 @@ def test_prep_uses_instructions_and_files(tmp_path):
     plan = prep.run(task_id, client=fake)
     prompt = fake.sent["messages"][0]["content"]
     assert "to-do app" in prompt and "Rubric: 10 pts" in prompt and "ISTM 4205" in prompt
-    assert fake.sent["tool_choice"] == {"type": "tool", "name": "save_prep"}
+    assert "tool_choice" not in fake.sent  # some models reject a forced tool call
     assert plan["estimated_minutes"] == 150 and plan["had_blackboard_details"]
     assert db.get_prep(task_id)["summary"] == "Build a React to-do app."
 

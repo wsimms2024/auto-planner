@@ -71,18 +71,11 @@ def _hash(text: str) -> str:
 
 
 def extract_with_claude(code: str, document: str, today: date, client=None) -> list[dict]:
-    if client is None:
-        import anthropic
+    from autoplan import llm
 
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL, max_tokens=1500,
-        system=SYSTEM.format(today=today.strftime("%A, %B %d, %Y")),
-        tools=[TOOL], tool_choice={"type": "tool", "name": "save_exams"},
-        messages=[{"role": "user", "content": f"Course: {code}\n\n{document}"}],
-    )
-    block = next(b for b in response.content if getattr(b, "type", None) == "tool_use")
-    return list(dict(block.input).get("exams", []))
+    data = llm.structured(SYSTEM.format(today=today.strftime("%A, %B %d, %Y")), f"Course: {code}\n\n{document}",
+                          TOOL, max_tokens=1500, api=client)
+    return list(data.get("exams", []))
 
 
 def extract_with_rules(code: str, course_id: str, today: date) -> list[dict]:
@@ -114,6 +107,7 @@ def run(now: datetime | None = None, force: bool = False, client=None) -> str:
     """Look for exam dates in every current course whose text changed since last time."""
     now = now or datetime.now()
     new = changed = checked = 0
+    failed: list[str] = []
     use_claude = client is not None or bool(os.environ.get("ANTHROPIC_API_KEY"))
     for course in db.list_bb_courses():
         document = course_document(course["id"])
@@ -124,7 +118,11 @@ def run(now: datetime | None = None, force: bool = False, client=None) -> str:
         if not force and db.get_preference_value(key) == h:
             continue
         checked += 1
-        exams = extract_with_claude(course["code"], document, now.date(), client) if use_claude else extract_with_rules(course["code"], course["id"], now.date())
+        try:
+            exams = extract_with_claude(course["code"], document, now.date(), client) if use_claude else extract_with_rules(course["code"], course["id"], now.date())
+        except Exception as e:  # one class failing shouldn't stop the rest; it's retried next run
+            failed.append(f"{course['code']} ({type(e).__name__})")
+            continue
         for e in exams:
             try:
                 if date.fromisoformat(e["date"]) < now.date():
@@ -137,7 +135,8 @@ def run(now: datetime | None = None, force: bool = False, client=None) -> str:
         db.set_preference(key, h)
     if not checked:
         return "exam dates: no course changes"
-    return f"exam dates: read {checked} course{'s' if checked != 1 else ''}, {new} new, {changed} changed"
+    message = f"exam dates: read {checked} course{'s' if checked != 1 else ''}, {new} new, {changed} changed"
+    return message + (f"; couldn't read {', '.join(failed)}" if failed else "")
 
 
 # ---------- Confirming ----------

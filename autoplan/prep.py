@@ -89,20 +89,9 @@ def run(task_id: int, client=None) -> dict:
     if task is None:
         raise ValueError(f"No task {task_id}")
     details = db.get_bb_assignment_for_task(task_id)
-    if client is None:
-        import anthropic
+    from autoplan import llm
 
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL,
-        max_tokens=2000,
-        system=SYSTEM,
-        tools=[PREP_TOOL],
-        tool_choice={"type": "tool", "name": "save_prep"},
-        messages=[{"role": "user", "content": build_prompt(task, details)}],
-    )
-    block = next(b for b in response.content if getattr(b, "type", None) == "tool_use")
-    plan = dict(block.input)
+    plan = llm.structured(SYSTEM, build_prompt(task, details), PREP_TOOL, max_tokens=2000, api=client)
     plan["estimated_minutes"] = sum(int(s.get("minutes", 0)) for s in plan.get("steps", []))
     plan["had_blackboard_details"] = details is not None
     db.save_prep(task_id, plan)

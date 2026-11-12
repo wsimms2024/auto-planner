@@ -195,16 +195,8 @@ def suggest_weights(course_id: str, client=None) -> dict:
     text = "\n\n".join(prep.extract_text(f) for f in files)[:20000]
     if not text.strip():
         return {"error": "No syllabus found on Blackboard for this class (or it isn't a readable PDF/Word file). Enter the weights yourself."}
-    if client is None:
-        import anthropic
+    from autoplan import llm
 
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    response = client.messages.create(
-        model=config.CLAUDE_MODEL, max_tokens=800,
-        system="Extract the course grading breakdown from this syllabus. Only report what the syllabus says. Call save_weights.",
-        tools=[WEIGHTS_TOOL], tool_choice={"type": "tool", "name": "save_weights"},
-        messages=[{"role": "user", "content": text}],
-    )
-    block = next(b for b in response.content if getattr(b, "type", None) == "tool_use")
-    data = dict(block.input)
+    data = llm.structured("Extract the course grading breakdown from this syllabus. Only report what the syllabus says.",
+                          text, WEIGHTS_TOOL, max_tokens=800, api=client)
     return {"weights": {w["category"]: float(w["percent"]) for w in data.get("weights", [])}, "notes": data.get("notes", "")}
