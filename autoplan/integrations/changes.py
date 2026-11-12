@@ -7,7 +7,8 @@ become a Telegram message:
   - new assignments or tasks due in the next 2 weeks, and moved due dates
   - grades posted on Blackboard
   - exam dates found, or changed
-  - new emails on the review list from Blackboard or professors (others are counted)
+  - important new emails, each with a 1-2 sentence summary (professors and Blackboard first;
+    beyond the first few, the rest are counted)
   - imported calendar events in the next 48 hours that were added or cancelled
 Nothing else (routine re-syncs, your own edits in the app) triggers a message.
 """
@@ -20,6 +21,7 @@ SNAPSHOT_KEY = "alert_snapshot"
 TASK_WINDOW_DAYS = 14
 EVENT_WINDOW_HOURS = 48
 MAX_LINES = 12
+MAX_EMAILS = 4
 
 
 def _fmt(dt: datetime) -> str:
@@ -34,7 +36,7 @@ def snapshot(now: datetime) -> dict:
             if not g["is_total"]:
                 grades[g["id"]] = [c["code"], g["name"], g["score"], g["possible"]]
     exams = {str(e["id"]): [e["name"], e["date"], e.get("start_time"), e["status"]] for e in db.list_exam_candidates()}
-    inbox = {i.external_id: [i.subject, i.kind] for i in db.list_inbox()}
+    inbox = {i.external_id: [i.subject, i.kind, i.summary or i.snippet[:200]] for i in db.list_inbox()}
     imported = [e for e in db.list_events() if e.source in ("google", "blackboard")]
     soon = {
         f"{e.id}:{e.start.isoformat()}": [e.name, e.start.isoformat()]
@@ -73,10 +75,13 @@ def diff(before: dict, after: dict, now: datetime) -> list[str]:
             lines.append(f"⚠️ {name} changed to {when} (was {old[1]}{' ' + old[2] if old[2] else ''})")
 
     new_mail = [v for k, v in after["inbox"].items() if k not in before["inbox"]]
-    important = [s for s, kind in new_mail if kind in ("blackboard", "professor")]
-    for subject in important[:3]:
-        lines.append(f"📬 {subject}")
-    others = len(new_mail) - min(len(important), 3)
+    rank = {"professor": 0, "blackboard": 1, "time-sensitive": 2}
+    new_mail.sort(key=lambda v: rank.get(v[1], 3))
+    shown = new_mail[:MAX_EMAILS]
+    for subject, _kind, *rest in shown:
+        summary = rest[0] if rest else ""
+        lines.append(f"📬 {subject}" + (f": {summary}" if summary else ""))
+    others = len(new_mail) - len(shown)
     if others > 0:
         lines.append(f"📬 {others} more email{'s' if others != 1 else ''} to review")
 

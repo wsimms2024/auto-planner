@@ -47,11 +47,29 @@ def test_grade_posted_and_exam_found_and_changed():
     assert changes.check(NOW) == ["⚠️ ISTM 4205 Midterm changed to 2026-11-20 15:45 (was 2026-11-18)"]
 
 
-def test_only_important_email_is_named():
+def test_emails_come_with_summaries_professors_first():
     changes.check(NOW)
-    for i, (subject, kind) in enumerate([("ISTM 4205: Class cancelled Friday", "blackboard"), ("Registration opens", "time-sensitive")]):
-        db.add_inbox_item(InboxItem(external_id=f"m{i}", subject=subject, sender="x", received_at=NOW, snippet="", kind=kind))
-    assert changes.check(NOW) == ["📬 ISTM 4205: Class cancelled Friday", "📬 1 more email to review"]
+    mail = [("Registration opens", "time-sensitive", "", "Registration for spring opens Nov 16."),
+            ("ISTM 4205: Class cancelled Friday", "blackboard", "No class Friday; Lab 5 now due Monday 11:59 PM.", ""),
+            ("Midterm question", "professor", "Prof. Lee says the midterm covers ch. 1-6 and is open note.", "")]
+    for i, (subject, kind, summary, snippet) in enumerate(mail):
+        db.add_inbox_item(InboxItem(external_id=f"m{i}", subject=subject, sender="x", received_at=NOW, snippet=snippet, kind=kind, summary=summary))
+    assert changes.check(NOW) == [
+        "📬 Midterm question: Prof. Lee says the midterm covers ch. 1-6 and is open note.",
+        "📬 ISTM 4205: Class cancelled Friday: No class Friday; Lab 5 now due Monday 11:59 PM.",
+        "📬 Registration opens: Registration for spring opens Nov 16.",  # no key: snippet stands in
+    ]
+
+
+def test_extra_emails_are_counted_and_old_snapshots_still_work():
+    changes.check(NOW)
+    old = db.get_preference_value(changes.SNAPSHOT_KEY)
+    old["inbox"] = {"old": ["Old subject", "professor"]}  # saved by the previous version
+    db.set_preference(changes.SNAPSHOT_KEY, old)
+    for i in range(6):
+        db.add_inbox_item(InboxItem(external_id=f"n{i}", subject=f"Mail {i}", sender="x", received_at=NOW, snippet="", kind="professor"))
+    lines = changes.check(NOW)
+    assert len([l for l in lines if l.startswith("📬 Mail")]) == 4 and lines[-1] == "📬 2 more emails to review"
 
 
 def test_cancelled_calendar_event_in_next_48h():

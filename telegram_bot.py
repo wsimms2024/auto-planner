@@ -118,6 +118,12 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("assistant failed")
         answer = f"Something went wrong talking to Claude: {type(e).__name__}: {e}"
     await update.message.reply_text(answer[:4000])
+    for path in get_assistant().outbox.pop(str(update.effective_chat.id), []):
+        try:
+            with open(path, "rb") as f:
+                await update.message.reply_document(f, filename=os.path.basename(path))
+        except Exception as e:
+            await update.message.reply_text(f"Couldn't send {os.path.basename(path)}: {type(e).__name__}")
 
 
 # ---------- Follow-up buttons ----------

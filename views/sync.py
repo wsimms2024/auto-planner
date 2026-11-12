@@ -297,7 +297,7 @@ with review_tab:
             if c2.button("Add", key=f"add_{item.id}", help=f"Add as a task, {due_text}, {ui.fmt_minutes(guess_minutes)}"):
                 add_from_email(item, item.subject[:120], default_due, guess_minutes, guess_priority)
             with c3.popover("Edit"):
-                st.caption(item.snippet)
+                st.caption(item.summary or item.snippet)
                 with st.form(f"inbox_{item.id}", border=False):
                     name = st.text_input("Task", value=item.subject[:120])
                     a, b = st.columns(2)

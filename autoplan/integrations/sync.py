@@ -119,6 +119,12 @@ def sync_blackboard_details(now: datetime | None = None) -> tuple[bool, str]:
             message += "; " + exam_finder.run(now)
         except Exception as e:  # finding exams should never break the Blackboard read
             message += f"; exam dates skipped ({type(e).__name__})"
+        try:
+            from autoplan import class_schedule
+
+            message += "; " + class_schedule.run(now)
+        except Exception as e:
+            message += f"; class schedules skipped ({type(e).__name__})"
         return message
 
     return _run("blackboard_details", work)

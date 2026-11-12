@@ -339,11 +339,21 @@ def course_texts(client: BBClient, course: Course, contents: list[dict], columns
     for a in client.get_all(f"{API}/v1/courses/{course.id}/announcements", limit=100) or []:
         rows.append({"id": f"ann:{a['id']}", "course_id": course.id, "kind": "announcement", "title": a.get("title", ""),
                      "text": html_to_text(a.get("body")), "posted_at": a.get("created") or a.get("modified")})
+    by_id = {i["id"]: i for i in contents}
+
+    def folder_of(item: dict) -> str:
+        path, parent = [], by_id.get(item.get("parentId"))
+        while parent and len(path) < 6:
+            path.insert(0, parent.get("title", ""))
+            parent = by_id.get(parent.get("parentId"))
+        return " > ".join(p for p in path if p)
+
     for item in contents:
         text = html_to_text(item.get("body") or item.get("description"))
         if item.get("title") or text:
             rows.append({"id": f"content:{item['id']}", "course_id": course.id, "kind": "content", "title": item.get("title", ""),
-                         "text": text, "posted_at": item.get("created")})
+                         "text": text, "posted_at": item.get("created"),
+                         "handler": (item.get("contentHandler") or {}).get("id"), "folder": folder_of(item)})
     status, page = client.try_get(f"{API}/v1/calendars/items", since=(now - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z"),
                                   until=(now + timedelta(days=150)).strftime("%Y-%m-%dT00:00:00Z"), courseId=course.id, limit=200)
     if status == 200 and page:
@@ -434,6 +444,26 @@ def _contents(client: BBClient, course_id: str) -> list[dict]:
             queue += [k for k in kids if k.get("hasChildren")]
         return flat
     return walk_contents(items)
+
+
+def download_content(course_id: str, content_id: str) -> list[str]:
+    """
+    Files attached to one course item, downloaded on request (cached in data/bb_files).
+    Opens the background Blackboard session only if they aren't downloaded yet.
+    """
+    course = next((c for c in db.list_bb_courses() if c["id"] == course_id), None)
+    code = (course or {}).get("code", "course").replace(" ", "_")
+    folder = FILES_DIR / code / "files" / content_id
+    if folder.exists() and any(folder.iterdir()):
+        return [str(p) for p in sorted(folder.iterdir())]
+    paths = []
+    with BBClient() as client:
+        for att in client.get_all(f"{API}/v1/courses/{course_id}/contents/{content_id}/attachments") or []:
+            name = re.sub(r'[\\/:*?"<>|]', "_", att.get("fileName", "file"))
+            dest = folder / name
+            if client.download(f"{API}/v1/courses/{course_id}/contents/{content_id}/attachments/{att['id']}/download", dest):
+                paths.append(str(dest))
+    return paths
 
 
 def _download_attachments(client: BBClient, course: Course, a: Assignment) -> list[dict]:

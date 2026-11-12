@@ -23,6 +23,16 @@ def morning_text(now: datetime | None = None) -> str:
     else:
         lines.append("Nothing on the calendar.")
 
+    from autoplan import class_schedule
+
+    in_class = class_schedule.today_in_class(today)
+    if in_class:
+        lines.append("")
+        lines.append("In class:")
+        for s in in_class:
+            extra = (f" (read: {s['readings']})" if s["readings"] else "") + (f" [due: {s['due']}]" if s["due"] else "")
+            lines.append(f"{s['course_code']}: {s['topic'] or 'class'}{extra}")
+
     tasks = [t for t in db.list_tasks() if t.status == "open"]
     overdue = [t for t in tasks if t.deadline < now]
     soon = [t for t in tasks if now <= t.deadline <= now + timedelta(days=2)]

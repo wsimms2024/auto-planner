@@ -114,6 +114,15 @@ course pages, calendar and gradebook (newer announcements beat the syllabus).
 Confirm them on Sync → Exam dates or by texting the bot; confirmed exams go on
 your calendar and exam mode plans the review. Changed dates are flagged.
 
+**What's happening in class** comes from each syllabus's course schedule.
+Claude turns it into dated sessions once (and again only when the syllabus
+changes); week-based schedules are dated from your class meeting days. The
+dashboard and morning briefing show today's topic, readings and what's due,
+and the bot answers "what are we doing in ISTM 4205 today?" with recent
+announcements included. Ask "send me the week 12 slides" and the bot searches
+course content and sends the files as Telegram documents (downloaded on
+request, cached in `data/bb_files`).
+
 If something doesn't come through right, Sync → Blackboard → Troubleshooting →
 **Save sample data** writes Blackboard's raw responses to `data/bb_debug`.
 
@@ -131,8 +140,15 @@ The bot also sends a morning briefing and asks after each study session
 whether you did it (missed ones get rescheduled). Every 2 hours it syncs
 Google Calendar, Gmail, Blackboard and exam dates, and texts you only when
 something important changed: a new assignment or moved due date, a posted
-grade, an exam date found or changed, an email from Blackboard or a professor,
-or a class cancelled in the next 48 hours. Alerts wait out quiet hours
+grade, an exam date found or changed, an important email, or a class cancelled
+in the next 48 hours. Each important email comes with a 1-2 sentence Claude
+summary (what to do, by when); without an API key it uses Gmail's preview.
+
+The bot can also read your email on request (read-only): "what did my prof say
+about the midterm?" or "any emails about registration this week?" It searches
+Gmail, reads the message and texts back the important parts with a link. It
+can't send, reply to or delete mail, and it treats email text as information,
+never as instructions. Alerts wait out quiet hours
 (11 PM to 7 AM). Change the interval and quiet hours in `autoplan/config.py`. Gym days and the briefing time are on the Settings page.
 
 `start_autoplan.bat` starts the app and the bot together. Put a shortcut to it

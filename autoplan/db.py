@@ -136,6 +136,16 @@ CREATE TABLE IF NOT EXISTS course_texts (
     posted_at TEXT                      -- when it was posted, if known
 );
 
+CREATE TABLE IF NOT EXISTS class_sessions (
+    course_id TEXT NOT NULL,
+    date      TEXT NOT NULL,             -- ISO date of the class meeting
+    topic     TEXT NOT NULL DEFAULT '',
+    readings  TEXT NOT NULL DEFAULT '',
+    due       TEXT NOT NULL DEFAULT '',  -- what the syllabus says is due that day
+    notes     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (course_id, date)
+);
+
 CREATE TABLE IF NOT EXISTS exam_candidates (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     course_id   TEXT NOT NULL,
@@ -226,6 +236,9 @@ MIGRATIONS = [
     ("events", "google_event_id", "TEXT"),   # copy on the Google "AutoPlan" calendar
     ("events", "google_hash", "TEXT"),       # what was last sent, to spot edits
     ("bb_courses", "syllabus", "TEXT"),      # JSON list of downloaded syllabus file paths
+    ("course_texts", "handler", "TEXT"),     # Blackboard content type, e.g. resource/x-bb-file
+    ("course_texts", "folder", "TEXT"),      # folder path, e.g. "Week 11 > Slides"
+    ("inbox_items", "summary", "TEXT NOT NULL DEFAULT ''"),  # short Claude summary for alerts
 ]
 
 INDEXES = """
@@ -735,6 +748,7 @@ def _row_to_inbox(row: sqlite3.Row) -> InboxItem:
         detected_due=_dt(row["detected_due"]),
         link=row["link"],
         status=row["status"],
+        summary=row["summary"] or "",
     )
 
 
@@ -742,11 +756,11 @@ def add_inbox_item(item: InboxItem, db_path: Optional[Path] = None) -> bool:
     """Add an email to the review list. Returns False if it was already there."""
     with get_connection(db_path) as conn:
         cur = conn.execute(
-            "INSERT OR IGNORE INTO inbox_items (external_id, subject, sender, received_at, snippet, kind, detected_due, link) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO inbox_items (external_id, subject, sender, received_at, snippet, kind, detected_due, link, summary) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item.external_id, item.subject, item.sender, item.received_at.isoformat(), item.snippet,
-                item.kind, item.detected_due.isoformat() if item.detected_due else None, item.link,
+                item.kind, item.detected_due.isoformat() if item.detected_due else None, item.link, item.summary,
             ),
         )
         return cur.rowcount == 1
@@ -920,9 +934,48 @@ def save_course_texts(rows: list[dict], db_path: Optional[Path] = None) -> None:
     with get_connection(db_path) as conn:
         for r in rows:
             conn.execute(
-                "INSERT OR REPLACE INTO course_texts (id, course_id, kind, title, text, posted_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (r["id"], r["course_id"], r["kind"], r["title"], r["text"], r.get("posted_at")),
+                "INSERT OR REPLACE INTO course_texts (id, course_id, kind, title, text, posted_at, handler, folder) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (r["id"], r["course_id"], r["kind"], r["title"], r["text"], r.get("posted_at"), r.get("handler"), r.get("folder")),
             )
+
+
+def replace_class_sessions(course_id: str, sessions: list[dict], db_path: Optional[Path] = None) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("DELETE FROM class_sessions WHERE course_id = ?", (course_id,))
+        for s in sessions:
+            conn.execute(
+                "INSERT OR REPLACE INTO class_sessions (course_id, date, topic, readings, due, notes) VALUES (?, ?, ?, ?, ?, ?)",
+                (course_id, s["date"], s.get("topic", ""), s.get("readings", ""), s.get("due", ""), s.get("notes", "")),
+            )
+
+
+def class_sessions_on(day: date, db_path: Optional[Path] = None) -> list[dict]:
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT s.*, c.code AS course_code, c.name AS course_name FROM class_sessions s "
+            "JOIN bb_courses c ON c.id = s.course_id WHERE s.date = ? ORDER BY c.code", (day.isoformat(),)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def search_course_files(query: str, course_id: str | None = None, limit: int = 10, db_path: Optional[Path] = None) -> list[dict]:
+    """Content items whose title, folder or text match all the words in the query."""
+    words = [w for w in query.lower().split() if len(w) > 1]
+    sql = ("SELECT t.*, c.code AS course_code FROM course_texts t JOIN bb_courses c ON c.id = t.course_id "
+           "WHERE t.kind = 'content'")
+    params: list = []
+    if course_id:
+        sql += " AND t.course_id = ?"
+        params.append(course_id)
+    with get_connection(db_path) as conn:
+        rows = [dict(r) for r in conn.execute(sql, params)]
+    def score(r):
+        hay_title = f"{r['title']} {r.get('folder') or ''}".lower()
+        hay_text = (r["text"] or "").lower()
+        if not all(w in hay_title or w in hay_text for w in words):
+            return 0
+        return sum(3 if w in hay_title else 1 for w in words) + (2 if (r.get("handler") or "").endswith(("file", "document")) else 0)
+    ranked = sorted((r for r in rows if score(r)), key=score, reverse=True)
+    return ranked[:limit]
 
 
 def list_course_texts(course_id: str, db_path: Optional[Path] = None) -> list[dict]:

@@ -73,6 +73,16 @@ with left:
             )
         st.markdown(f'<ul class="ap-timeline">{"".join(rows)}</ul>', unsafe_allow_html=True)
 
+    from autoplan import class_schedule
+
+    in_class = class_schedule.today_in_class(today)
+    if in_class:
+        st.markdown("**In class today**")
+        for s in in_class:
+            extra = f" · read: {s['readings']}" if s["readings"] else ""
+            extra += f" · due: {s['due']}" if s["due"] else ""
+            st.markdown(f"{s['course_code']}: {s['topic'] or 'class'}<span style='color:var(--muted)'>{escape(extra)}</span>", unsafe_allow_html=True)
+
 with right:
     st.subheader("Needs attention")
     if to_review:

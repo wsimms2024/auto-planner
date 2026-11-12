@@ -9,6 +9,7 @@ To give the assistant a new ability, write a function here and add it to TOOLS.
 """
 
 import difflib
+from pathlib import Path
 from datetime import date, datetime, time, timedelta
 
 from autoplan import config, db, scheduler, task_rules
@@ -569,6 +570,102 @@ def dismiss_exam(exam_id: int) -> dict:
     return {"deleted": f"exam suggestion {exam_id}"}
 
 
+# ---------- Class content and files ----------
+
+def class_today(day: str = "today", course: str | None = None, now: datetime | None = None) -> dict:
+    """What's on the syllabus for each class that day (topic, readings, what's due), recent announcements, and assignments due soon."""
+    from autoplan import class_schedule
+
+    now = now or datetime.now()
+    d = parse_day(day, now)
+    sessions = class_schedule.today_in_class(d)
+    if course:
+        key = course.lower().replace(" ", "")
+        sessions = [s for s in sessions if key in (s["course_code"] + (s.get("course_name") or "")).lower().replace(" ", "")]
+    out = []
+    for s in sessions:
+        due_soon = [t for t in db.list_tasks() if t.status == "open" and d <= t.deadline.date() <= d + timedelta(days=3)
+                    and (db.get_bb_assignment_for_task(t.id) or {}).get("course_code") == s["course_code"]]
+        out.append({
+            "course": s["course_code"], "topic": s["topic"], "readings": s["readings"], "due_in_class": s["due"],
+            "notes": s["notes"], "recent_announcements": s["announcements"],
+            "assignments_due_next_3_days": [f"{t.name} ({_fmt(t.deadline)})" for t in due_soon],
+        })
+    if not out:
+        return {"date": d.strftime("%A, %B %d"), "classes": [],
+                "note": "No syllabus schedule entries for that day (no class, or the syllabus has no dated schedule)."}
+    return {"date": d.strftime("%A, %B %d"), "classes": out}
+
+
+def find_course_files(query: str, course: str | None = None) -> dict:
+    """Search Blackboard course content (slides, readings, handouts) by words in the title, folder or text."""
+    match = _course_match(course) if course else None
+    rows = db.search_course_files(query, match["id"] if match else None)
+    if not rows:
+        return {"files": [], "note": f"Nothing in course content matches '{query}'."}
+    return {"files": [{"content_id": r["id"].split(":", 1)[1], "course": r["course_code"], "title": r["title"],
+                       "folder": r.get("folder") or "", "type": (r.get("handler") or "").replace("resource/x-bb-", "")} for r in rows]}
+
+
+def get_course_file(content_id: str, course: str | None = None) -> dict:
+    """Download the files attached to a course item (from find_course_files) and send them to Will on Telegram."""
+    from autoplan.integrations import bb_scraper
+
+    with db.get_connection() as conn:
+        row = conn.execute("SELECT course_id, title FROM course_texts WHERE id = ?", (f"content:{content_id}",)).fetchone()
+    if not row:
+        return {"error": f"No course item {content_id}. Use find_course_files first."}
+    paths = bb_scraper.download_content(row["course_id"], content_id)
+    if not paths:
+        text = next((t["text"] for t in db.list_course_texts(row["course_id"]) if t["id"] == f"content:{content_id}"), "")
+        return {"error": f"'{row['title']}' has no attached files (it may be a page or a link).", "text": (text or "")[:500]}
+    return {"sent_files": [Path(p).name for p in paths], "send_files": paths, "title": row["title"]}
+
+
+# ---------- Email (read-only) ----------
+
+def _gmail():
+    from autoplan.integrations import google_auth
+
+    try:
+        return google_auth.gmail_service()
+    except Exception as e:
+        raise RuntimeError("Gmail isn't connected. Sign in with Google on the Sync page.") from e
+
+
+def search_email(query: str, days: int = 30) -> dict:
+    """Search Will's Gmail (read-only). Gmail search syntax works: from:, subject:, has:attachment."""
+    from autoplan.integrations import gmail
+
+    try:
+        rows = gmail.search(_gmail(), query, days=days)
+    except RuntimeError as e:
+        return {"error": str(e)}
+    if not rows:
+        return {"emails": [], "note": f"No emails in the last {days} days match '{query}'."}
+    return {"emails": rows}
+
+
+def read_email(message_id: str) -> dict:
+    """The text of one email (message_id from search_email or recent_emails) plus a Gmail link."""
+    from autoplan.integrations import gmail
+
+    try:
+        return gmail.read(_gmail(), message_id)
+    except RuntimeError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": f"Couldn't open that email ({type(e).__name__})."}
+
+
+def recent_emails() -> dict:
+    """Important emails AutoPlan flagged that are still waiting for review, with summaries."""
+    items = db.list_inbox()
+    return {"emails": [{"message_id": i.external_id, "from": i.sender, "subject": i.subject, "kind": i.kind,
+                        "received": _fmt(i.received_at), "summary": i.summary or i.snippet,
+                        "due": _fmt(i.detected_due) if i.detected_due else None} for i in items[:15]]}
+
+
 # ---------- Tool definitions for Claude ----------
 
 DAY = {"type": "string", "description": "'today', 'tomorrow', a weekday name, or YYYY-MM-DD"}
@@ -662,6 +759,18 @@ TOOLS = [
       "required": ["exam_id"]}},
     {"name": "dismiss_exam", "description": "Drop an exam suggestion that isn't really an exam.",
      "input_schema": {"type": "object", "properties": {"exam_id": {"type": "integer"}}, "required": ["exam_id"]}},
+    {"name": "class_today", "description": "What's happening in class on a day according to the syllabus: topic, readings, what's due, recent announcements, assignments due soon. Optionally one course.",
+     "input_schema": {"type": "object", "properties": {"day": DAY, "course": {"type": "string"}}}},
+    {"name": "find_course_files", "description": "Search Blackboard course content (lecture slides, readings, handouts, assignment sheets) by keywords. Returns content_ids.",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "course": {"type": "string"}}, "required": ["query"]}},
+    {"name": "get_course_file", "description": "Send Will the files attached to a course item (content_id from find_course_files). They arrive as Telegram documents.",
+     "input_schema": {"type": "object", "properties": {"content_id": {"type": "string"}}, "required": ["content_id"]}},
+    {"name": "recent_emails", "description": "Important emails AutoPlan already flagged (professors, Blackboard, deadlines), with short summaries.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "search_email", "description": "Search Will's Gmail, read-only. Accepts Gmail search syntax (from:, subject:, has:attachment, quoted phrases).",
+     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "days": {"type": "integer", "description": "How far back, default 30"}}, "required": ["query"]}},
+    {"name": "read_email", "description": "Read the full text of one email by message_id (from search_email or recent_emails).",
+     "input_schema": {"type": "object", "properties": {"message_id": {"type": "string"}}, "required": ["message_id"]}},
     {"name": "schedule_study_session", "description": "Put a study session for a task on the calendar. Only when Will agrees to a time.",
      "input_schema": {"type": "object", "properties": {
          "task_name": {"type": "string"},
@@ -690,6 +799,12 @@ FUNCTIONS = {
     "grade_needed": grade_needed,
     "log_grade": log_grade,
     "get_exam_dates": get_exam_dates,
+    "class_today": class_today,
+    "recent_emails": recent_emails,
+    "search_email": search_email,
+    "read_email": read_email,
+    "find_course_files": find_course_files,
+    "get_course_file": get_course_file,
     "confirm_exam": confirm_exam,
     "dismiss_exam": dismiss_exam,
     "log_workout": log_workout,

@@ -131,6 +131,7 @@ class InboxItem:
     detected_due: Optional[datetime] = None
     link: str = ""
     status: str = "pending"  # pending / added / dismissed
+    summary: str = ""  # Claude's 1-2 sentence version, for Telegram
     id: Optional[int] = None
 
 
