@@ -95,22 +95,32 @@ for c in courses:
               "Due": ui.fmt_dt(i["due"]) if i["due"] else "", "From": i["source"], "Ignore": i["ignored"]} for i in rows],
             columns=["_id", "Item", "Category", "Score", "Out of", "Due", "From", "Ignore"],
         )
-        with st.expander(f"{s['graded_count']} graded, {s['remaining_count']} to go · edit or add grades"):
-            edited = st.data_editor(
-                df, key=ui.editor_key(key), num_rows="dynamic", hide_index=True, width="stretch",
-                disabled=["Due", "From"],
-                column_config={
-                    "_id": None,  # hidden: links each row to its Blackboard item or your entry
-                    "Category": st.column_config.SelectboxColumn(options=categories),
-                    "Score": st.column_config.NumberColumn(min_value=0, step=0.5),
-                    "Out of": st.column_config.NumberColumn(min_value=0, step=0.5),
-                    "Ignore": st.column_config.CheckboxColumn(help="Leave out of the math (deletes your own entries)"),
-                },
-            )
-            st.caption("Change a score, category or 'Out of', tick Ignore to drop an item, or add a row at the bottom for a grade Blackboard doesn't have.")
-            if st.button("Save changes", key=f"save_{c['id']}"):
+        dupes = sum(1 for i in rows if i.get("duplicate"))
+        label = f"{s['graded_count']} graded, {s['remaining_count']} to go · edit or add grades"
+        with st.expander(label, expanded=st.session_state.get(f"open_{c['id']}", False)):
+            if dupes:
+                st.caption(f"{dupes} duplicate Blackboard column{'s are' if dupes != 1 else ' is'} left out (same name and points as another row).")
+            # In a form, edits don't reload the page until you save, so nothing gets lost mid-edit
+            with st.form(f"gradeform_{c['id']}", border=False):
+                edited = st.data_editor(
+                    df, key=ui.editor_key(key), num_rows="dynamic", hide_index=True, width="stretch",
+                    disabled=["Due", "From"],
+                    column_config={
+                        "_id": None,  # hidden: links each row to its Blackboard item or your entry
+                        "Category": st.column_config.SelectboxColumn(options=categories),
+                        "Score": st.column_config.NumberColumn(min_value=0, step=0.5),
+                        "Out of": st.column_config.NumberColumn(min_value=0, step=0.5),
+                        "Ignore": st.column_config.CheckboxColumn(help="Leave out of the math (deletes your own entries)"),
+                    },
+                )
+                st.caption("Edit as many cells as you like, then Save. Tick Ignore to drop an item, or add a row at the bottom for a grade Blackboard doesn't have.")
+                saved = st.form_submit_button("Save changes", type="primary")
+            if saved:
+                st.session_state[f"open_{c['id']}"] = True  # keep this class open after saving
                 if save_table_edits(c["id"], df, edited, key):
                     ui.flash(f"Saved {c['code']} grades.")
+                else:
+                    ui.flash("No changes to save.", "warning")
                 st.rerun()
 
         # ---------- weights and mode ----------

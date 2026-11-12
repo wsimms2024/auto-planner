@@ -97,3 +97,26 @@ def test_syllabus_weight_suggestion():
     result = grades.suggest_weights("_101_1", client=fake)
     assert "Exams 40%" in fake.text
     assert result["weights"] == {"Exams": 40.0, "Assignments": 40.0, "Participation": 20.0}
+
+
+def test_duplicate_columns_from_merged_sections_are_counted_once():
+    rows = []
+    for n in range(1, 4):
+        rows.append({"id": f"a{n}", "course_id": "_101_1", "name": f"HW{n}", "possible": 10, "score": None, "display": None, "due": None, "is_total": False})
+        rows.append({"id": f"b{n}", "course_id": "_101_1", "name": f"HW{n} ", "possible": 10, "score": None, "display": None, "due": None, "is_total": False})
+    db.replace_bb_grades(["_101_1"], rows)
+    db.set_grade_override("a1", score=9)    # score put on the first copy
+    db.set_grade_override("b2", score=8)    # or on the second copy
+    s = grades.standing("_101_1", NOW)
+    assert s["graded_count"] == 2 and s["remaining_count"] == 1  # HW3 counted once, not twice
+    assert s["remaining_possible"] == 10
+    ignored = {i["id"] for i in s["items"] if i.get("duplicate")}
+    assert ignored == {"bb:b1", "bb:a2", "bb:b3"}
+
+
+def test_copies_with_different_scores_are_both_kept():
+    db.replace_bb_grades(["_101_1"], [
+        {"id": "x1", "course_id": "_101_1", "name": "Lab", "possible": 10, "score": 7, "display": None, "due": None, "is_total": False},
+        {"id": "x2", "course_id": "_101_1", "name": "Lab", "possible": 10, "score": 9, "display": None, "due": None, "is_total": False},
+    ])
+    assert grades.standing("_101_1", NOW)["graded_count"] == 2

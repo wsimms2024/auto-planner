@@ -70,6 +70,7 @@ def items_for(course_id: str) -> list[dict]:
             "ignored": bool(o.get("ignored")),
             "is_total": i["is_total"],
         })
+    _mark_duplicates(items)
     for e in db.list_grade_entries(course_id):
         items.append({
             "id": f"m:{e['id']}", "name": e["name"], "category": e["category"] or guess_category(e["name"]),
@@ -77,6 +78,32 @@ def items_for(course_id: str) -> list[dict]:
             "source": "You", "ignored": False, "is_total": False,
         })
     return items
+
+
+def _mark_duplicates(items: list[dict]) -> None:
+    """
+    Merged courses (two sections in one Blackboard shell) often list every column twice.
+    Same name and same points = one item: keep the copy with a score (or the first) and
+    leave the rest out of the math. Copies with different scores are kept, since they're
+    probably genuinely different.
+    """
+    groups: dict[tuple, list[dict]] = {}
+    for i in items:
+        if not i["is_total"]:
+            key = (re.sub(r"\s+", " ", i["name"].strip().lower()), i["possible"])
+            groups.setdefault(key, []).append(i)
+    for copies in groups.values():
+        if len(copies) < 2:
+            continue
+        scores = {c["score"] for c in copies if c["score"] is not None}
+        if len(scores) > 1:
+            continue
+        keeper = next((c for c in copies if c["score"] is not None), copies[0])
+        for c in copies:
+            if c is not keeper:
+                c["ignored"] = True
+                c["duplicate"] = True
+                c["source"] = "Blackboard (duplicate)"
 
 
 def counted(items: list[dict]) -> list[dict]:
