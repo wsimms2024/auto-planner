@@ -160,12 +160,23 @@ def _start_listener() -> None:
         def log_message(self, *args):
             pass
 
-    try:
-        server = HTTPServer(("127.0.0.1", REDIRECT_PORT), Handler)
-    except OSError:
+    import socket
+
+    class Server6(HTTPServer):
+        address_family = socket.AF_INET6
+
+    servers = []
+    # Browsers may try "localhost" as IPv6 (::1) or IPv4 (127.0.0.1), so listen on both.
+    for cls, host in ((HTTPServer, "127.0.0.1"), (Server6, "::1")):
+        try:
+            servers.append(cls((host, REDIRECT_PORT), Handler))
+        except OSError:
+            continue
+    if not servers:
         return
-    _listener = server
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    _listener = servers[0]
+    for server in servers:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
 def _save(creds) -> None:

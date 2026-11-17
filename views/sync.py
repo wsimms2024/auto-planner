@@ -124,9 +124,11 @@ def google_sign_in(expired: bool) -> None:
     st.caption("Approve access. If Google warns the app is unverified, click Advanced, then Continue.")
     code = google_auth.caught_code(flow)
     if not code:
-        st.markdown("2. You'll land on a page at **localhost:8765**. On this computer it just says *Signed in*; "
-                    "click the button below. On another device the page won't load: copy its whole address and paste it here.")
-        pasted = st.text_input("Address of that page (only needed on another device)", key="google_pasted")
+        st.markdown("2. Google then sends you to a **localhost:8765** page. If it says *Signed in*, click the button below. "
+                    "If it says **refused to connect** or **can't be reached** (normal on a laptop or phone), copy the whole "
+                    "address from the address bar, paste it here, then click the button. Do this within a few minutes "
+                    "and don't refresh this page in between.")
+        pasted = st.text_input("Address of that page (starts with http://localhost:8765/?state=)", key="google_pasted")
         c1, c2 = st.columns([1, 1])
         done = c1.button("I've signed in")
         if c2.button("Start over"):
