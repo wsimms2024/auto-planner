@@ -70,6 +70,104 @@ def get_credentials(interactive: bool = False):
     return creds
 
 
+# ---------- Sign-in that works from any device ----------
+#
+# The old way (run_local_server) opened a browser on the computer running
+# AutoPlan and froze the page until it finished, so clicking from a laptop or
+# phone hung. Now the page shows a Google link. After you approve, Google sends
+# your browser to http://localhost:8765/?code=... If you're on the AutoPlan
+# computer, a tiny listener catches that automatically; on another device that
+# page won't load, so you paste its address back into AutoPlan.
+
+REDIRECT_PORT = 8765
+REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/"
+_caught: dict[str, str] = {}  # state -> code, filled by the listener
+_listener = None
+
+
+def start_sign_in() -> tuple[object, str]:
+    """(flow to keep until finish_sign_in, Google URL to open)."""
+    import os
+
+    from google_auth_oauthlib.flow import Flow
+
+    os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")  # Google may return scopes in a different order
+    flow = Flow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES, redirect_uri=REDIRECT_URI)
+    url, state = flow.authorization_url(access_type="offline", prompt="consent")
+    flow._autoplan_state = state
+    _start_listener()
+    return flow, url
+
+
+def caught_code(flow) -> str | None:
+    """The code the listener caught for this sign-in, if you approved on the AutoPlan computer."""
+    return _caught.get(getattr(flow, "_autoplan_state", ""))
+
+
+def token_works() -> bool:
+    """The saved sign-in still works (refreshes it if needed). False if it expired or was revoked."""
+    try:
+        get_credentials(interactive=False)
+        return True
+    except NotSignedIn:
+        return False
+
+
+def code_from(pasted: str) -> str:
+    """Accept the whole localhost address, or just the code."""
+    from urllib.parse import parse_qs, urlparse
+
+    pasted = pasted.strip()
+    if "code=" in pasted:
+        query = parse_qs(urlparse(pasted).query) if "://" in pasted else parse_qs(pasted.split("?", 1)[-1])
+        if query.get("error"):
+            raise ValueError(f"Google said: {query['error'][0]}")
+        return query["code"][0]
+    if "error=" in pasted:
+        raise ValueError("Google didn't approve the sign-in. Try again.")
+    return pasted
+
+
+def finish_sign_in(flow, code: str):
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+    _save(creds)
+    return creds
+
+
+def _start_listener() -> None:
+    """Catch Google's redirect on this computer. Quietly skipped if the port is taken."""
+    global _listener
+    if _listener is not None:
+        return
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs, urlparse
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            q = parse_qs(urlparse(self.path).query)
+            if "code" in q and "state" in q:
+                _caught[q["state"][0]] = q["code"][0]
+                body = "Signed in. You can close this tab and go back to AutoPlan."
+            else:
+                body = "Sign-in didn't finish. Go back to AutoPlan and try again."
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body.encode())
+
+        def log_message(self, *args):
+            pass
+
+    try:
+        server = HTTPServer(("127.0.0.1", REDIRECT_PORT), Handler)
+    except OSError:
+        return
+    _listener = server
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 def _save(creds) -> None:
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")

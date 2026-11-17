@@ -107,6 +107,58 @@ with exams_tab:
 
 # ---------- Google ----------
 
+def google_sign_in(expired: bool) -> None:
+    """Link-based sign-in: works whether you're on the AutoPlan computer, a laptop or a phone."""
+    flow = st.session_state.get("google_flow")
+    if flow is None:
+        if st.button("Sign in with Google"):
+            try:
+                st.session_state["google_flow"], st.session_state["google_url"] = google_auth.start_sign_in()
+            except Exception as e:
+                st.error(f"Couldn't start sign-in: {type(e).__name__}: {e}")
+                return
+            st.rerun()
+        return
+
+    st.link_button("1. Open Google sign-in", st.session_state["google_url"], type="primary")
+    st.caption("Approve access. If Google warns the app is unverified, click Advanced, then Continue.")
+    code = google_auth.caught_code(flow)
+    if not code:
+        st.markdown("2. You'll land on a page at **localhost:8765**. On this computer it just says *Signed in*; "
+                    "click the button below. On another device the page won't load: copy its whole address and paste it here.")
+        pasted = st.text_input("Address of that page (only needed on another device)", key="google_pasted")
+        c1, c2 = st.columns([1, 1])
+        done = c1.button("I've signed in")
+        if c2.button("Start over"):
+            st.session_state.pop("google_flow", None)
+            st.rerun()
+        if not done:
+            return
+        code = google_auth.caught_code(flow)
+        if not code and pasted.strip():
+            try:
+                code = google_auth.code_from(pasted)
+            except (ValueError, KeyError, IndexError) as e:
+                st.error(f"That address doesn't have a sign-in code in it. {e}")
+                return
+        if not code:
+            st.warning("Haven't heard back from Google yet. Finish signing in, or paste the localhost address.")
+            return
+    try:
+        google_auth.finish_sign_in(flow, code)
+    except Exception as e:
+        st.session_state.pop("google_flow", None)
+        st.error(f"Sign-in didn't work ({type(e).__name__}: {e}). Click Sign in with Google to try again.")
+        return
+    st.session_state.pop("google_flow", None)
+    if expired:
+        ok, message = sync.sync_google_calendar()  # catch up: push what was added while signed out
+        ui.flash("Signed back in with Google. " + ("Your calendar is caught up." if ok else message), "success" if ok else "warning")
+    else:
+        ui.flash("Signed in with Google. Pick which calendars to import below.")
+    st.rerun()
+
+
 with google_tab:
     if not google_auth.has_credentials_file():
         st.warning(
@@ -114,23 +166,11 @@ with google_tab:
             "make a Desktop OAuth client, and save the downloaded file as `credentials.json` in "
             f"`{config.PROJECT_ROOT}`. Then refresh this page."
         )
-    elif not google_auth.is_signed_in() or sync.google_needs_login():
+    elif not google_auth.is_signed_in() or "google_flow" in st.session_state or not google_auth.token_works():
         expired = google_auth.is_signed_in()
         st.write("Your Google sign-in expired. Sign in again and anything you added meanwhile goes to Google Calendar."
                  if expired else "Sign in once and AutoPlan can read your calendar and email. A browser tab will open.")
-        if st.button("Sign in with Google"):
-            try:
-                if expired:
-                    google_auth.sign_out()
-                google_auth.get_credentials(interactive=True)
-                if expired:
-                    ok, message = sync.sync_google_calendar()  # catch up: push what was added while signed out
-                    ui.flash("Signed back in with Google. " + ("Your calendar is caught up." if ok else message), "success" if ok else "warning")
-                else:
-                    ui.flash("Signed in with Google. Pick which calendars to import below.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Sign-in didn't work: {e}")
+        google_sign_in(expired)
     else:
         st.subheader("Calendars to import")
         st.caption("Imported as fixed events. Accepted study sessions go to a separate AutoPlan calendar with a reminder.")

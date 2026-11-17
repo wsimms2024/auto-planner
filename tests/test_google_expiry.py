@@ -70,3 +70,62 @@ def test_bot_add_event_says_it_didnt_reach_google(monkeypatch):
 def test_not_set_up_is_quiet(monkeypatch):
     google_auth.TOKEN_PATH.unlink()
     assert sync.push_to_google(NOW) is None and not sync.google_needs_login()
+
+
+# ---------- Link-based sign-in ----------
+
+def test_code_from_pasted_address_or_code():
+    assert google_auth.code_from("http://localhost:8765/?state=abc&code=4/0Ab-xyz&scope=x") == "4/0Ab-xyz"
+    assert google_auth.code_from("  4/0Ab-xyz ") == "4/0Ab-xyz"
+    with pytest.raises(ValueError):
+        google_auth.code_from("http://localhost:8765/?error=access_denied&state=abc")
+
+
+def test_listener_catches_redirect_on_this_computer(monkeypatch):
+    import socket
+    import urllib.request
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    monkeypatch.setattr(google_auth, "REDIRECT_PORT", port)
+    monkeypatch.setattr(google_auth, "_listener", None)
+    google_auth._start_listener()
+    try:
+        page = urllib.request.urlopen(f"http://127.0.0.1:{port}/?state=s1&code=c1", timeout=5).read().decode()
+        assert "Signed in" in page
+        flow = type("F", (), {"_autoplan_state": "s1"})()
+        assert google_auth.caught_code(flow) == "c1"
+    finally:
+        google_auth._listener.shutdown()
+
+
+def test_finish_sign_in_saves_token(monkeypatch):
+    class Creds:
+        def to_json(self):
+            return '{"refresh_token": "r"}'
+
+    class Flow:
+        credentials = Creds()
+
+        def fetch_token(self, code):
+            self.code = code
+
+    flow = Flow()
+    google_auth.finish_sign_in(flow, "c1")
+    assert flow.code == "c1" and "refresh_token" in google_auth.TOKEN_PATH.read_text()
+
+
+def test_start_sign_in_builds_offline_consent_link(monkeypatch, tmp_path):
+    import json
+
+    creds = tmp_path / "credentials.json"
+    creds.write_text(json.dumps({"installed": {"client_id": "id.apps.googleusercontent.com", "client_secret": "s",
+                                               "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                                               "token_uri": "https://oauth2.googleapis.com/token", "redirect_uris": ["http://localhost"]}}))
+    monkeypatch.setattr(google_auth, "CREDENTIALS_PATH", creds)
+    monkeypatch.setattr(google_auth, "_start_listener", lambda: None)
+    flow, url = google_auth.start_sign_in()
+    assert url.startswith("https://accounts.google.com/") and "access_type=offline" in url and "prompt=consent" in url
+    assert "redirect_uri=http%3A%2F%2Flocalhost%3A8765%2F" in url and "gmail.readonly" in url
+    assert flow._autoplan_state in url
