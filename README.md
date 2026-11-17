@@ -123,6 +123,12 @@ announcements included. Ask "send me the week 12 slides" and the bot searches
 course content and sends the files as Telegram documents (downloaded on
 request, cached in `data/bb_files`).
 
+**Questions about a syllabus or handout:** ask the bot things like "what's the
+late policy for ISTM 4205?", "how much is the final worth in stats?" or "what
+does the lab 5 sheet say about submitting?" PDFs go to Claude as the actual
+file, so tables (week-by-week schedules, grade breakdowns) and scanned pages
+are read too.
+
 If something doesn't come through right, Sync → Blackboard → Troubleshooting →
 **Save sample data** writes Blackboard's raw responses to `data/bb_debug`.
 

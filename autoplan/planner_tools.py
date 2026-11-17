@@ -622,6 +622,40 @@ def get_course_file(content_id: str, course: str | None = None) -> dict:
     return {"sent_files": [Path(p).name for p in paths], "send_files": paths, "title": row["title"]}
 
 
+def ask_syllabus(course: str, question: str) -> dict:
+    """Answer a question from a course's syllabus file (PDF read as a document, so tables and scans work)."""
+    from autoplan import doc_qa
+
+    match = _course_match(course)
+    if not match:
+        return {"error": f"No course matching '{course}'. Courses: " + ", ".join(c["code"] for c in db.list_bb_courses())}
+    try:
+        paths = doc_qa.syllabus_files(match)
+        if not paths:
+            return {"error": f"No syllabus file found for {match['code']}. Run a Blackboard sync, or use find_course_files to look for it."}
+        return {"course": match["code"], "files": [Path(p).name for p in paths], "answer": doc_qa.ask(paths, question, match["code"])}
+    except Exception as e:
+        return {"error": f"Couldn't read the syllabus ({type(e).__name__}: {e})."}
+
+
+def ask_course_file(content_id: str, question: str) -> dict:
+    """Answer a question from a course content file (content_id from find_course_files)."""
+    from autoplan import doc_qa
+    from autoplan.integrations import bb_scraper
+
+    with db.get_connection() as conn:
+        row = conn.execute("SELECT course_id, title FROM course_texts WHERE id = ?", (f"content:{content_id}",)).fetchone()
+    if not row:
+        return {"error": f"No course item {content_id}. Use find_course_files first."}
+    try:
+        paths = bb_scraper.download_content(row["course_id"], content_id)
+        if not paths:
+            return {"error": f"'{row['title']}' has no attached files to read."}
+        return {"title": row["title"], "answer": doc_qa.ask(paths, question, row["title"])}
+    except Exception as e:
+        return {"error": f"Couldn't read '{row['title']}' ({type(e).__name__}: {e})."}
+
+
 # ---------- Email (read-only) ----------
 
 def _gmail():
@@ -765,6 +799,10 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"query": {"type": "string"}, "course": {"type": "string"}}, "required": ["query"]}},
     {"name": "get_course_file", "description": "Send Will the files attached to a course item (content_id from find_course_files). They arrive as Telegram documents.",
      "input_schema": {"type": "object", "properties": {"content_id": {"type": "string"}}, "required": ["content_id"]}},
+    {"name": "ask_syllabus", "description": "Answer any question from a course's syllabus (grading weights, late policy, attendance, office hours, exam format, schedule). Reads the actual PDF.",
+     "input_schema": {"type": "object", "properties": {"course": {"type": "string"}, "question": {"type": "string"}}, "required": ["course", "question"]}},
+    {"name": "ask_course_file", "description": "Answer a question from a course file (assignment sheet, slides, reading) by content_id from find_course_files.",
+     "input_schema": {"type": "object", "properties": {"content_id": {"type": "string"}, "question": {"type": "string"}}, "required": ["content_id", "question"]}},
     {"name": "recent_emails", "description": "Important emails AutoPlan already flagged (professors, Blackboard, deadlines), with short summaries.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "search_email", "description": "Search Will's Gmail, read-only. Accepts Gmail search syntax (from:, subject:, has:attachment, quoted phrases).",
@@ -800,6 +838,8 @@ FUNCTIONS = {
     "log_grade": log_grade,
     "get_exam_dates": get_exam_dates,
     "class_today": class_today,
+    "ask_syllabus": ask_syllabus,
+    "ask_course_file": ask_course_file,
     "recent_emails": recent_emails,
     "search_email": search_email,
     "read_email": read_email,
