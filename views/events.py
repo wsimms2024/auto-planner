@@ -94,7 +94,9 @@ def event_form(key: str, existing: Event | None = None) -> None:
         db.add_event(event)
         st.session_state[f"{key}_version"] = version + 1
         ui.flash(f"Added **{event.name}**.")
-    sync.push_to_google()  # show it on Google Calendar / your phone
+    problem = sync.push_to_google()  # show it on Google Calendar / your phone
+    if problem:
+        ui.flash(f"Saved **{event.name}** in AutoPlan, but {problem}.", "warning")
     st.rerun()
 
 

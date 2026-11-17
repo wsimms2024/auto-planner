@@ -18,6 +18,7 @@ def _run(source: str, fn) -> tuple[bool, str]:
         db.set_sync_state(source, message)
         return True, message
     except google_auth.NotSignedIn as e:
+        db.set_sync_state(source, f"NotSignedIn: {e}")
         return False, str(e)
     except Exception as e:  # keep the app running; show what went wrong
         message = f"Failed: {type(e).__name__}: {e}"
@@ -50,10 +51,14 @@ def sync_google_calendar(now: datetime | None = None, interactive: bool = False)
     return _run("google", work)
 
 
-def push_to_google(now: datetime | None = None) -> None:
-    """Right after a change in AutoPlan, copy it to Google so it shows on your phone. Silent if not signed in."""
+def push_to_google(now: datetime | None = None) -> str | None:
+    """
+    Right after a change in AutoPlan, copy it to Google so it shows on your phone.
+    Returns None if it worked (or Google isn't set up), otherwise a short reason.
+    Failures are saved so the app and bot can say so; the regular sync retries.
+    """
     if not google_auth.is_signed_in():
-        return
+        return None
     from autoplan.integrations import google_calendar
 
     now = now or datetime.now()
@@ -61,8 +66,29 @@ def push_to_google(now: datetime | None = None) -> None:
         service = google_auth.calendar_service()
         google_calendar.push_events(service, now)
         google_calendar.push_sessions(service, now)
-    except Exception:
-        pass  # the regular sync will retry
+    except google_auth.NotSignedIn:
+        db.set_sync_state("google_push", "NotSignedIn")
+        return GOOGLE_EXPIRED
+    except Exception as e:
+        db.set_sync_state("google_push", f"Failed: {type(e).__name__}: {e}")
+        return f"couldn't reach Google Calendar ({type(e).__name__}); it'll retry on the next sync"
+    db.set_sync_state("google_push", "ok")
+    return None
+
+
+GOOGLE_EXPIRED = "your Google sign-in expired, so it's not on Google Calendar yet. Sign in again on AutoPlan's Sync page"
+
+
+def google_needs_login() -> bool:
+    """The saved Google token stopped working (expired or revoked)."""
+    if not google_auth.is_signed_in():
+        return False
+    signed_in_at = datetime.fromtimestamp(google_auth.TOKEN_PATH.stat().st_mtime)
+    for source in ("google", "google_push", "gmail"):
+        at, message = db.get_sync_state(source)
+        if at and message.startswith("NotSignedIn") and at > signed_in_at:  # failed since the last sign-in
+            return True
+    return False
 
 
 def sync_gmail(now: datetime | None = None, interactive: bool = False) -> tuple[bool, str]:

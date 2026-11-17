@@ -35,10 +35,11 @@ def receipt(name: str, output: dict) -> str:
         "cancelled_one_day": "Cancelled for that day", "cancelled": "Cancelled", "scheduled": "Scheduled",
         "marked_done": "Marked done", "workout_day": "Today's workout set to", "title": "Sent files from",
     }
+    warn = f"\n⚠️ {output['google_calendar']}" if output.get("google_calendar") else ""
     for key, label in labels.items():
         if key in output:
             extra = output.get("when") or output.get("date") or output.get("due") or ""
-            return f"✓ {label}: {output[key]}" + (f" ({extra})" if extra else "")
+            return f"✓ {label}: {output[key]}" + (f" ({extra})" if extra else "") + warn
     if name == "log_workout":
         return "✓ Workout logged"
     if name == "log_recovery":

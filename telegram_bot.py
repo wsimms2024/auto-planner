@@ -273,6 +273,15 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             await context.bot.send_message(CHAT_ID, "Your Blackboard login expired. Open AutoPlan → Sync → Blackboard and click Connect Blackboard.")
             db.set_sync_state("bb_login_notice", "sent")
 
+    # Google sign-in expired: say so once (calendar copies and email stop until you sign in again)
+    if sync.google_needs_login():
+        told_at, _ = db.get_sync_state("google_login_notice")
+        failed_at = max((t for t in (db.get_sync_state(s)[0] for s in ("google", "google_push", "gmail")) if t), default=now)
+        if told_at is None or told_at < failed_at:
+            await context.bot.send_message(CHAT_ID, "Your Google sign-in expired, so new events aren't reaching Google Calendar and email "
+                                                    "checks are paused. Open AutoPlan → Sync and click Sign in with Google.")
+            db.set_sync_state("google_login_notice", "sent")
+
     # Morning briefing, once a day
     prefs = db.get_preferences()
     briefing_at = datetime.combine(now.date(), prefs.briefing_time)

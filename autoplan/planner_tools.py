@@ -828,7 +828,9 @@ def run_tool(name: str, args: dict) -> dict:
         if name in CALENDAR_WRITES and isinstance(result, dict) and not result.get("error"):
             from autoplan.integrations import sync
 
-            sync.push_to_google()
+            problem = sync.push_to_google()
+            if problem:
+                result = {**result, "google_calendar": f"Not synced: {problem}."}
         return result
     except (ValueError, TypeError) as e:
         return {"error": f"Bad input: {e}"}

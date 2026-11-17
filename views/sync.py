@@ -114,12 +114,20 @@ with google_tab:
             "make a Desktop OAuth client, and save the downloaded file as `credentials.json` in "
             f"`{config.PROJECT_ROOT}`. Then refresh this page."
         )
-    elif not google_auth.is_signed_in():
-        st.write("Sign in once and AutoPlan can read your calendar and email. A browser tab will open.")
+    elif not google_auth.is_signed_in() or sync.google_needs_login():
+        expired = google_auth.is_signed_in()
+        st.write("Your Google sign-in expired. Sign in again and anything you added meanwhile goes to Google Calendar."
+                 if expired else "Sign in once and AutoPlan can read your calendar and email. A browser tab will open.")
         if st.button("Sign in with Google"):
             try:
+                if expired:
+                    google_auth.sign_out()
                 google_auth.get_credentials(interactive=True)
-                ui.flash("Signed in with Google. Pick which calendars to import below.")
+                if expired:
+                    ok, message = sync.sync_google_calendar()  # catch up: push what was added while signed out
+                    ui.flash("Signed back in with Google. " + ("Your calendar is caught up." if ok else message), "success" if ok else "warning")
+                else:
+                    ui.flash("Signed in with Google. Pick which calendars to import below.")
                 st.rerun()
             except Exception as e:
                 st.error(f"Sign-in didn't work: {e}")

@@ -88,6 +88,11 @@ def flash(message: str, kind: str = "success") -> None:
 
 
 def show_flash() -> None:
+    from autoplan.integrations import sync
+
+    if sync.google_needs_login():
+        st.warning("Your Google sign-in expired. New events aren't reaching Google Calendar and email checks are paused. "
+                   "Go to Sync and click **Sign in with Google**.")
     value = st.session_state.pop("_flash", None)
     if value:
         message, kind = value

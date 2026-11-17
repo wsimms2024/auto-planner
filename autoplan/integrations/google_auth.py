@@ -28,6 +28,7 @@ def has_credentials_file() -> bool:
 
 
 def is_signed_in() -> bool:
+    """A token is saved (it may still have expired; syncs report that)."""
     return TOKEN_PATH.exists()
 
 

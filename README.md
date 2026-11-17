@@ -151,6 +151,14 @@ can't send, reply to or delete mail, and it treats email text as information,
 never as instructions. Alerts wait out quiet hours
 (11 PM to 7 AM). Change the interval and quiet hours in `autoplan/config.py`. Gym days and the briefing time are on the Settings page.
 
+If your Google sign-in expires, every page shows a warning and the bot texts
+you once; sign in again on the Sync page and anything added in the meantime
+goes to Google Calendar. Google ends sign-ins after 7 days while your Cloud
+project's OAuth app is in "Testing". To stop that, open Google Cloud Console →
+Google Auth Platform → Audience and click **Publish app** (it stays private
+to you; Google shows an "unverified app" screen when you sign in, so click
+Advanced → Continue).
+
 `start_autoplan.bat` starts the app and the bot together. Put a shortcut to it
 in `shell:startup` on an always-on computer.
 
